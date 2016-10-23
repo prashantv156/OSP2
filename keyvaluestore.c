@@ -5,8 +5,16 @@
 #include <time.h>
 #include <fcntl.h>
 #include <asm/types.h>
+#include <pthread.h>
+#include <semaphore.h>
+
+pthread_cond_t empty, fill;
+pthread_mutex_t mutex;
+int done = 0;
+int transactionid = 0;
 
 int  MAX_NUMBER_OF_KEY_VALUE_PAIRS = 2048;
+
 
 static __u32 hash(__u64 key)
 {
@@ -56,8 +64,6 @@ static long keyvalue_set(struct keyvalue_set** cmd)
 
 	struct dictnode* val = map->hashmap[key_to_be_set];
 	
-	printf("val: %llu\n", val);
-	
 	if(val == 0)
 	{
 		map->hashmap[key_to_be_set] = head;
@@ -67,17 +73,32 @@ static long keyvalue_set(struct keyvalue_set** cmd)
 	{	
 		if(val->next == NULL)
 		{	
-			val->next = head;
+			if(val->kventry->key == key_to_be_set)
+			{	
+				strcpy(val->kventry->data, (*cmd)->data);
+				free(head);			
+			}
+			else
+			{
+				val->next = head;
+			}
 		}
 		else
 		{
 			while(val->next != NULL)
 			{	
-				val = val->next;
+
+				if(val->kventry->key == key_to_be_set)
+				{
+					strcpy(val->kventry->data,(*cmd)->data);
+					free(head);
+					return 1;
+				}								
+				val = val->next;	
 			}
-		
+
 			val->next = head;
-			
+		
 		}
 		return 1;
 	}
@@ -86,7 +107,7 @@ static long keyvalue_set(struct keyvalue_set** cmd)
 
 }
 
-void printAllKeys()
+void* consumer()
 {
 	struct dictnode* start = NULL;
 	int entries = (int)(sizeof(map->hashmap))/(sizeof(struct dictnode*));
@@ -102,15 +123,15 @@ void printAllKeys()
 						
 			if(start->next == NULL)
 			{
-				printf("The key is: %llu \n", start->kventry->key);
-				printf("Data: %s \n", start->kventry->data);
+				printf("\nThe key is: %llu \n", start->kventry->key);
+				printf("Data: %s \n\r", start->kventry->data);
 			}
 			else
 			{
 				while(start != NULL)
 				{	
-					printf("The key is: %llu \n", start->kventry->key);
-					printf("Data: %s \n", start->kventry->data);
+					printf("\nThe key is: %llu \n", start->kventry->key);
+					printf("Data: %s \n\r", start->kventry->data);
 					start = start->next;
 				}
 			}	
@@ -130,7 +151,7 @@ long kv_set(__u64 key, __u64 size, void *data)
 }
 
 
-int main()
+void* producer()
 {	
 
 	int number_of_keys = 20;	
@@ -144,22 +165,21 @@ int main()
 	
 	for(i = 0; i < number_of_keys; i++)
     	{
-        	memset(data, 0, 1024);
+		memset(data, 0, 1024);
         	a = rand();
        		sprintf(data,"%d",a);
-		if(i%2 == 0)
-		{
-        		tid = kv_set(i,strlen(data),data);
-        		fprintf(stderr,"S\t%d\t%d\t%d\t%s\n",tid,i,strlen(data),data);
-		}
 		tid = kv_set(i, strlen(data), data);
         	fprintf(stderr,"S\t%d\t%d\t%d\t%s\n",tid,i,strlen(data),data);
-    	}
+    	}	
 	
-	printf("%s", "\nPrinting all stored keys\n");
-	printAllKeys();
-	return 0;
 
 }
 
+int main()
+{
+	printf("Begin\n");
+	pthread_t p;
+	pthread_t c;
+	return 0;
 
+}
