@@ -38,6 +38,7 @@ struct keyvalue_base
 };
 typedef struct keyvalue_base keyvalue_set;
 typedef struct keyvalue_base keyvalue_get;
+typedef struct keyvalue_base keyvalue_delete;
 
 struct dictnode 
 {
@@ -72,9 +73,9 @@ static void initializeDictionary()
 static long get_keyvalue(keyvalue_get* cmd)
 {
 	int key_to_be_fetched	= cmd->key;
-	struct dictnode* val	= map->hashmap[key_to_be_fetched];
+	struct dictnode* curr	= map->hashmap[key_to_be_fetched];
 
-	if(val == NULL)
+	if(curr == NULL)
 	{
 		#ifdef DEBUG_MODE_1
 			fprintf(stdout,"\tRequested key %llu is yet to be inserted in the map", cmd->key);
@@ -83,20 +84,68 @@ static long get_keyvalue(keyvalue_get* cmd)
 	}
 	else
 	{
-		while(val != NULL)
+		while(curr != NULL)
 		{
-			if(val->kventry->key	== cmd->key)
+			if(curr->kventry->key	== cmd->key)
 			{
+				#ifdef DEBUG_MODE_1
+        				fprintf(stdout,"Read:\tkey: %llu\tsize: %llu\tdata: %s\n",curr->kventry->key, curr->size, curr->kventry->data);
+				#endif
+
 				return 1;
 			}
-			val	= val->next;
+			curr	= curr->next;
 		}
 		
+		#ifdef DEBUG_MODE_1
+			fprintf(stdout,"\tRequested key %llu is yet to be inserted in the map", cmd->key);
+		#endif
+
 		return -1;
 	}
 
 }
 
+static long delete_keyvalue(keyvalue_delete* cmd)
+{
+	int key_to_be_deleted = cmd->key;
+	struct dictnode* curr = map->hashmap[key_to_be_deleted];
+
+	if(curr == NULL)
+	{
+		#ifdef DEBUG_MODE_1
+			fprintf(stdout, "Map is empty. Cannot perform delete operation!");
+		#endif
+		return -1;
+	}
+	else if(curr->kventry->key	== cmd->key)
+	{
+		map->hashmap[key_to_be_deleted]	= curr->next;
+		free(curr);
+		return 1;
+	}
+	else
+	{
+		struct dictnode* prev	= curr;
+		while(curr != NULL)
+		{
+			if(curr->kventry->key	== cmd->key)
+			{
+				prev->next	= curr->next;
+				free(curr);
+				return 1;
+			}
+			prev	= curr;
+			curr 	= curr->next;
+		}
+
+		#ifdef DEBUG_MODE_1
+			fprintf(stdout, "The requested key is non-existant in the map!");
+		#endif
+
+		return -1;
+	}
+}
 
 static long set_keyvalue( keyvalue_set* cmd )
 {
@@ -174,11 +223,11 @@ static long set_keyvalue( keyvalue_set* cmd )
 	return 0;
 
 }
-
-void* consumer()
+/*
+void* consumer(int entries)
 {
 	struct dictnode* start = NULL;
-	int entries = (int)(sizeof(map->hashmap))/(sizeof(struct dictnode*));
+	//int entries = (int)(sizeof(map->hashmap))/(sizeof(struct dictnode*));
 	int i;
 
 	for(i=0; i<entries; i++)
@@ -206,7 +255,7 @@ void* consumer()
 	}
 	
 }
-
+*/
 
 long kv_set(__u64 key, __u64 size, void *data)
 {
@@ -218,16 +267,45 @@ long kv_set(__u64 key, __u64 size, void *data)
      	return set_keyvalue(cmd);
 }
 
+long kv_get(__u64 key, __u64 size, void *data)
+{
+     	keyvalue_get * cmd = (keyvalue_get *) malloc(sizeof(keyvalue_get));
+     	cmd->key = key;     
+     	cmd->size = size;
+     	strcpy(cmd->data, data);	
+     	//return set_keyvalue(&cmd);
+     	return get_keyvalue(cmd);
+}
+
+long kv_delete( __u64 key)
+{
+     	keyvalue_delete * cmd = (keyvalue_delete *) malloc(sizeof(keyvalue_delete));
+     	cmd->key = key;     
+	
+	return delete_keyvalue(cmd);
+}
+
+void* remover()
+{
+	int key	= 3;
+	if( kv_delete(key)  == 1)
+	{
+		fprintf(stdout, " deleted key= %d successfully", key);
+	}
+	else
+	{
+		fprintf(stdout, " delete failed");
+	}
+}
 
 void* producer()
 {	
 
 	int number_of_keys = 20;	
 	int a, i;
-	int tid;
+	int response;
 	__u64 size;
 	__u64 key;
-	initializeDictionary();	
 	srand((int)time(NULL)+(int)getpid());
 	char data[1024];	
 	
@@ -236,10 +314,43 @@ void* producer()
 		memset(data, 0, 1024);
         	a = rand();
        		sprintf(data,"%d",a);
-		tid = kv_set(i, strlen(data), data);
-        	fprintf(stdout,"S\t%d\t%d\t%zu\t%s\n",tid,i,strlen(data),data);
-    	}	
+		response = kv_set(i, strlen(data), data);
+        	fprintf(stdout,"Write:\t%d\t%d\t%zu\t%s\n",response,i,strlen(data),data);
+   	}	
 	
+
+}
+
+void* consumer()
+{
+	int number_of_keys = 20;	
+	int a, i;
+	int response;
+	__u64 size;
+	__u64 key;
+	srand((int)time(NULL)+(int)getpid());
+	char data[1024];	
+	
+	for(i = 0; i < number_of_keys; i++)
+    	{
+		memset(data, 0, 1024);
+        //	a = rand();
+       		sprintf(data,"%d",a);
+			// only using key values for detection
+		#ifdef DEBUG_MODE_1
+			fprintf(stdout," searching key: %d", i);
+		#endif
+		response = kv_get(i, strlen(data), data);
+		if(response == 1)
+		{
+			fprintf(stdout," Found element with key= %d", i);
+		}
+		else
+		{
+			fprintf(stdout,"\n Did not find element with key= %d", i);
+		}
+ 
+    	}	
 
 }
 
@@ -249,9 +360,23 @@ int main()
 	pthread_t p;
 	pthread_t c;
 
+	// allcoate memory to map
+	initializeDictionary();	
+	
+	// write values insdide map
 	pthread_create(&p, NULL, producer, NULL);
 	pthread_join(p, NULL);
+	
+	// delete a few values
+	//pthread_create(&p, NULL, remover, 3);
+	pthread_create(&p, NULL, remover, NULL);
+	pthread_join(p, NULL);
+	
 	printf("\n");
+	
+	// read values in the map
+	// producer hard codes them to 20
+	//pthread_create(&p, NULL, consumer, 20);
 	pthread_create(&p, NULL, consumer, NULL);
 	pthread_join(p, NULL);
 
