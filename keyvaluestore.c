@@ -12,13 +12,59 @@
 #define DEBUG_MODE_1
 #define  MAX_NUMBER_OF_KEY_VALUE_PAIRS 2048
 
-
-pthread_cond_t empty, fill;
-pthread_mutex_t mutex;
 int done = 0;
 int transactionid = 0;
 
 
+//////////////////////////// READERS WRITERS LOCK ///////////////////////////////////
+
+typedef struct _rwlock_t
+{
+	sem_t lock; // binary semaphore (basic lock)
+	sem_t writelock; // used to allow ONE writer or MANY readers
+	int readers; // count of readers reading in critical section
+} rwlock_t;
+
+void rwlock_init(rwlock_t *rw)
+{
+	rw->readers = 0;
+	sem_init(&rw->lock, 0, 1);
+	sem_init(&rw->writelock, 0, 1);
+}
+
+
+void rwlock_acquire_readlock(rwlock_t *rw) 
+{
+	sem_wait(&rw->lock);
+	rw->readers++;
+	if (rw->readers == 1)
+		sem_wait(&rw->writelock); // first reader acquires writelock
+	sem_post(&rw->lock);
+}
+
+void rwlock_release_readlock(rwlock_t *rw) 
+{
+	sem_wait(&rw->lock);
+	rw->readers--;
+	if (rw->readers == 0)
+		sem_post(&rw->writelock); // last reader releases writelock
+	sem_post(&rw->lock);
+}
+
+
+void rwlock_acquire_writelock(rwlock_t *rw)
+{
+	sem_wait(&rw->writelock);
+}
+ 
+void rwlock_release_writelock(rwlock_t *rw)
+{	
+	sem_post(&rw->writelock);
+}
+
+rwlock_t* lock = NULL;
+
+/////////////////////////////////////////////////////////////////////////////////////
 
 static __u32 hash(__u64 key)
 {
@@ -74,12 +120,15 @@ static long get_keyvalue(keyvalue_get* cmd)
 {
 	int key_to_be_fetched	= cmd->key;
 	struct dictnode* curr	= map->hashmap[key_to_be_fetched];
-
+	
+	rwlock_acquire_readlock(lock);
+		
 	if(curr == NULL)
 	{
 		#ifdef DEBUG_MODE_1
 			fprintf(stdout,"\tRequested key %llu is yet to be inserted in the map", cmd->key);
 		#endif
+		rwlock_release_readlock(lock);
 		return -1;
 	}
 	else
@@ -91,7 +140,7 @@ static long get_keyvalue(keyvalue_get* cmd)
 				#ifdef DEBUG_MODE_1
         				fprintf(stdout,"Read:\tkey: %llu\tsize: %llu\tdata: %s\n",curr->kventry->key, curr->size, curr->kventry->data);
 				#endif
-
+				rwlock_release_readlock(lock);
 				return 1;
 			}
 			curr	= curr->next;
@@ -100,7 +149,7 @@ static long get_keyvalue(keyvalue_get* cmd)
 		#ifdef DEBUG_MODE_1
 			fprintf(stdout,"\tRequested key %llu is yet to be inserted in the map", cmd->key);
 		#endif
-
+		rwlock_release_readlock(lock);
 		return -1;
 	}
 
@@ -111,17 +160,21 @@ static long delete_keyvalue(keyvalue_delete* cmd)
 	int key_to_be_deleted = cmd->key;
 	struct dictnode* curr = map->hashmap[key_to_be_deleted];
 
+	rwlock_acquire_writelock(lock);
+
 	if(curr == NULL)
 	{
 		#ifdef DEBUG_MODE_1
 			fprintf(stdout, "Map is empty. Cannot perform delete operation!");
 		#endif
+		rwlock_release_writelock(lock);
 		return -1;
 	}
 	else if(curr->kventry->key	== cmd->key)
 	{
 		map->hashmap[key_to_be_deleted]	= curr->next;
 		free(curr);
+		rwlock_release_writelock(lock);
 		return 1;
 	}
 	else
@@ -133,6 +186,7 @@ static long delete_keyvalue(keyvalue_delete* cmd)
 			{
 				prev->next	= curr->next;
 				free(curr);
+				rwlock_release_writelock(lock);
 				return 1;
 			}
 			prev	= curr;
@@ -142,7 +196,7 @@ static long delete_keyvalue(keyvalue_delete* cmd)
 		#ifdef DEBUG_MODE_1
 			fprintf(stdout, "The requested key is non-existant in the map!");
 		#endif
-
+		rwlock_release_writelock(lock);
 		return -1;
 	}
 }
@@ -153,6 +207,8 @@ static long set_keyvalue( keyvalue_set* cmd )
 	int key_to_be_set = cmd->key;
 	struct dictnode* val = map->hashmap[key_to_be_set];
 	
+	rwlock_acquire_writelock(lock);
+
 	if(val == NULL)
 	{
 	
@@ -160,6 +216,7 @@ static long set_keyvalue( keyvalue_set* cmd )
 		if(head == NULL)
 		{
 			fprintf(stderr," Memory allocation to node in dictionary failed!");
+			rwlock_release_writelock(lock);
 			exit(0);
 		}
 		head->kventry = cmd;
@@ -167,6 +224,7 @@ static long set_keyvalue( keyvalue_set* cmd )
 		head->next = NULL;
 	
 		map->hashmap[key_to_be_set] = head;
+		rwlock_release_writelock(lock);
 		return 1;
 
 	}
@@ -184,6 +242,7 @@ static long set_keyvalue( keyvalue_set* cmd )
 				if(head == NULL)
 				{
 					fprintf(stderr," Memory allocation to node in dictionary failed!");
+					rwlock_release_writelock(lock);
 					exit(0);
 				}
 				head->kventry = cmd;
@@ -200,6 +259,7 @@ static long set_keyvalue( keyvalue_set* cmd )
 				if(val->kventry->key == key_to_be_set)
 				{
 					strcpy(val->kventry->data,cmd->data);
+					rwlock_release_writelock(lock);
 					return 1;
 				}								
 				val = val->next;	
@@ -209,6 +269,7 @@ static long set_keyvalue( keyvalue_set* cmd )
 			if(head == NULL)
 			{
 				fprintf(stderr," Memory allocation to node in dictionary failed!");
+				rwlock_release_writelock(lock);
 				exit(0);
 			}
 			head->kventry = cmd;
@@ -217,6 +278,7 @@ static long set_keyvalue( keyvalue_set* cmd )
 		
 			val->next = head;
 		}
+		rwlock_release_writelock(lock);
 		return 1;
 	}
 
@@ -301,7 +363,7 @@ void* remover()
 void* producer()
 {	
 
-	int number_of_keys = 20;	
+	int number_of_keys = 10;	
 	int a, i;
 	int response;
 	__u64 size;
@@ -323,7 +385,7 @@ void* producer()
 
 void* consumer()
 {
-	int number_of_keys = 20;	
+	int number_of_keys = 10;	
 	int a, i;
 	int response;
 	__u64 size;
@@ -343,7 +405,7 @@ void* consumer()
 		response = kv_get(i, strlen(data), data);
 		if(response == 1)
 		{
-			fprintf(stdout," Found element with key= %d", i);
+			fprintf(stdout," Found element with key= %d\n\r", i);
 		}
 		else
 		{
@@ -357,28 +419,73 @@ void* consumer()
 int main()
 {
 	printf("Begin\n");
-	pthread_t p;
-	pthread_t c;
+	pthread_t p[4];
+	pthread_t c[4];
+	pthread_t d[4];
+	int i;
+	
+	//initialize lock;
+	lock = (rwlock_t*)malloc(sizeof(rwlock_t));
+	if(lock == NULL)
+	{
+		fprintf(stderr, "Could not allocate memory for lock");
+		exit(0);
+	}
+	rwlock_init(lock);
 
 	// allcoate memory to map
 	initializeDictionary();	
 	
 	// write values insdide map
-	pthread_create(&p, NULL, producer, NULL);
-	pthread_join(p, NULL);
+	for(i = 0; i<4; i++)
+	{
+		pthread_create(&p[i], NULL, producer, NULL);
+	}
 	
+/*	for(i=0; i<2; i++)
+	{		
+		pthread_join(p[i], NULL);
+	}*/	
+
 	// delete a few values
 	//pthread_create(&p, NULL, remover, 3);
-	pthread_create(&p, NULL, remover, NULL);
-	pthread_join(p, NULL);
+	//pthread_create(&p, NULL, remover, NULL);
+	//pthread_join(p, NULL);
+
+/*	for(i = 0; i<2; i++)
+	{
+		pthread_create(&d[i], NULL, remover, NULL);
+	}
 	
+	for(i=0; i<2; i++)
+	{		
+		pthread_join(d[i], NULL);
+	}*/	
+
+
 	printf("\n");
 	
 	// read values in the map
 	// producer hard codes them to 20
 	//pthread_create(&p, NULL, consumer, 20);
-	pthread_create(&p, NULL, consumer, NULL);
-	pthread_join(p, NULL);
+	//pthread_create(&p, NULL, consumer, NULL);
+
+	for(i = 0; i<4; i++)
+	{
+		pthread_create(&c[i], NULL, consumer, NULL);
+	}
+			
+	for(i=0; i<4; i++)
+	{		
+		pthread_join(p[i], NULL);
+	}
+	
+	for(i=0; i<4; i++)
+	{		
+		pthread_join(c[i], NULL);
+	}	
+
+	//pthread_join(p, NULL);
 
 	printf("\nEnd\n");
 
