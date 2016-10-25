@@ -4,6 +4,7 @@
 #include <sys/syscall.h>
 #include <time.h>
 #include <fcntl.h>
+#include <sys/types.h>
 #include <asm/types.h>
 #include <pthread.h>
 #include <semaphore.h>
@@ -106,7 +107,7 @@ static void initializeDictionary()
 	map = (struct dictionary*)malloc(sizeof(struct dictionary));	
 	if(map == NULL)
 	{
-		fprintf(stderr," Memory allocation to map failed!");
+		fprintf(stderr,"Memory allocation to map failed!\n");
 		exit(0);
 	}
 	int i = 0;
@@ -126,7 +127,7 @@ static long get_keyvalue(keyvalue_get* cmd)
 	if(curr == NULL)
 	{
 		#ifdef DEBUG_MODE_1
-			fprintf(stdout,"\tRequested key %llu is yet to be inserted in the map", cmd->key);
+			fprintf(stdout,"Requested key %llu is yet to be inserted in the map\n", cmd->key);
 		#endif
 		rwlock_release_readlock(lock);
 		return -1;
@@ -147,7 +148,7 @@ static long get_keyvalue(keyvalue_get* cmd)
 		}
 		
 		#ifdef DEBUG_MODE_1
-			fprintf(stdout,"\tRequested key %llu is yet to be inserted in the map", cmd->key);
+			fprintf(stdout,"Requested key %llu is yet to be inserted in the map\n", cmd->key);
 		#endif
 		rwlock_release_readlock(lock);
 		return -1;
@@ -165,7 +166,7 @@ static long delete_keyvalue(keyvalue_delete* cmd)
 	if(curr == NULL)
 	{
 		#ifdef DEBUG_MODE_1
-			fprintf(stdout, "Map is empty. Cannot perform delete operation!");
+			fprintf(stdout, "Map is empty. Cannot perform delete operation!\n");
 		#endif
 		rwlock_release_writelock(lock);
 		return -1;
@@ -194,7 +195,7 @@ static long delete_keyvalue(keyvalue_delete* cmd)
 		}
 
 		#ifdef DEBUG_MODE_1
-			fprintf(stdout, "The requested key is non-existant in the map!");
+			fprintf(stdout, "The requested key is non-existant in the map!\n");
 		#endif
 		rwlock_release_writelock(lock);
 		return -1;
@@ -215,7 +216,7 @@ static long set_keyvalue( keyvalue_set* cmd )
 		struct dictnode* head = (struct dictnode*)malloc(sizeof(struct dictnode));
 		if(head == NULL)
 		{
-			fprintf(stderr," Memory allocation to node in dictionary failed!");
+			fprintf(stderr,"Memory allocation to node in dictionary failed!\n");
 			rwlock_release_writelock(lock);
 			exit(0);
 		}
@@ -241,7 +242,7 @@ static long set_keyvalue( keyvalue_set* cmd )
 				struct dictnode* head = (struct dictnode*)malloc(sizeof(struct dictnode));
 				if(head == NULL)
 				{
-					fprintf(stderr," Memory allocation to node in dictionary failed!");
+					fprintf(stderr,"Memory allocation to node in dictionary failed!\n");
 					rwlock_release_writelock(lock);
 					exit(0);
 				}
@@ -268,7 +269,7 @@ static long set_keyvalue( keyvalue_set* cmd )
 			struct dictnode* head = (struct dictnode*)malloc(sizeof(struct dictnode));
 			if(head == NULL)
 			{
-				fprintf(stderr," Memory allocation to node in dictionary failed!");
+				fprintf(stderr,"Memory allocation to node in dictionary failed!\n");
 				rwlock_release_writelock(lock);
 				exit(0);
 			}
@@ -352,32 +353,38 @@ void* remover()
 	int key	= 3;
 	if( kv_delete(key)  == 1)
 	{
-		fprintf(stdout, " deleted key= %d successfully", key);
+		fprintf(stdout, "deleted key= %d successfully\n", key);
 	}
 	else
 	{
-		fprintf(stdout, " delete failed");
+		fprintf(stdout, "delete failed\n");
 	}
 }
 
 void* producer()
 {	
+	struct timeval tv;
+	gettimeofday(&tv, NULL);
+	suseconds_t curr_time = 0;
+	curr_time = tv.tv_usec;
 
 	int number_of_keys = 10;	
 	int a, i;
 	int response;
 	__u64 size;
 	__u64 key;
-	srand((int)time(NULL)+(int)getpid());
+	srand((int)curr_time + (int)getpid());
 	char data[1024];	
 	
 	for(i = 0; i < number_of_keys; i++)
     	{
+		gettimeofday(&tv, NULL);
+		curr_time = tv.tv_usec;
 		memset(data, 0, 1024);
         	a = rand();
        		sprintf(data,"%d",a);
 		response = kv_set(i, strlen(data), data);
-        	fprintf(stdout,"Write:\t%d\t%d\t%zu\t%s\n",response,i,strlen(data),data);
+        	fprintf(stdout,"Write:\t%d\t%d\t%zu\t%s\t%d\n",response,i,strlen(data),data,(int)curr_time);
    	}	
 	
 
@@ -385,12 +392,19 @@ void* producer()
 
 void* consumer()
 {
-	int number_of_keys = 10;	
+	int number_of_keys = 10;		
+
+	struct timeval tv;
+	gettimeofday(&tv, NULL);
+	suseconds_t time;
+
 	int a, i;
 	int response;
 	__u64 size;
 	__u64 key;
-	srand((int)time(NULL)+(int)getpid());
+
+//	srand((int)time(NULL)+(int)getpid());
+
 	char data[1024];	
 	
 	for(i = 0; i < number_of_keys; i++)
@@ -400,16 +414,22 @@ void* consumer()
        		sprintf(data,"%d",a);
 			// only using key values for detection
 		#ifdef DEBUG_MODE_1
-			fprintf(stdout," searching key: %d", i);
+			fprintf(stdout,"searching key: %d\n", i);
 		#endif
+	
+		gettimeofday(&tv, NULL);
+		time = tv.tv_usec;
+
 		response = kv_get(i, strlen(data), data);
 		if(response == 1)
 		{
-			fprintf(stdout," Found element with key= %d\n\r", i);
+			fprintf(stdout,"Found element with key= %d\n", i);	
+			fprintf(stdout,"Time at which key was found= %d\n", (int)time);
 		}
 		else
 		{
-			fprintf(stdout,"\n Did not find element with key= %d", i);
+			fprintf(stdout,"Did not find element with key= %d\n", i);	
+			fprintf(stdout,"Time at which key was not found= %d\n", (int)time);
 		}
  
     	}	
@@ -419,16 +439,16 @@ void* consumer()
 int main()
 {
 	printf("Begin\n");
-	pthread_t p[4];
+	pthread_t p[8];
 	pthread_t c[4];
-	pthread_t d[4];
+	pthread_t d[2];
 	int i;
 	
 	//initialize lock;
 	lock = (rwlock_t*)malloc(sizeof(rwlock_t));
 	if(lock == NULL)
 	{
-		fprintf(stderr, "Could not allocate memory for lock");
+		fprintf(stderr, "Could not allocate memory for lock\n");
 		exit(0);
 	}
 	rwlock_init(lock);
@@ -437,7 +457,7 @@ int main()
 	initializeDictionary();	
 	
 	// write values insdide map
-	for(i = 0; i<4; i++)
+	for(i = 0; i<8; i++)
 	{
 		pthread_create(&p[i], NULL, producer, NULL);
 	}
@@ -465,6 +485,14 @@ int main()
 
 	printf("\n");
 	
+
+	for(i = 0; i<2; i++)
+	{
+		pthread_create(&d[i], NULL, remover, NULL);
+	}
+
+	printf("\n");
+
 	// read values in the map
 	// producer hard codes them to 20
 	//pthread_create(&p, NULL, consumer, 20);
@@ -475,9 +503,14 @@ int main()
 		pthread_create(&c[i], NULL, consumer, NULL);
 	}
 			
-	for(i=0; i<4; i++)
+	for(i=0; i<8; i++)
 	{		
 		pthread_join(p[i], NULL);
+	}
+	
+	for(i = 0; i<2; i++)
+	{
+		pthread_join(d[i], NULL);
 	}
 	
 	for(i=0; i<4; i++)
