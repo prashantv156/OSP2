@@ -11,7 +11,7 @@
 #include <unistd.h>
 
 #define DEBUG_MODE_1
-#define  MAX_NUMBER_OF_KEY_VALUE_PAIRS 2048
+#define  MAX_NUMBER_OF_KEY_VALUE_PAIRS 256
 
 int done = 0;
 int transactionid = 0;
@@ -72,25 +72,26 @@ static __u32 hash(__u64 key)
 	int temp;
 	temp = key;
 	temp >>= 3;
-	return (key ^ (temp>>10) ^ (temp>>20)) & 0xBFF;
+	return (key ^ (temp>>10) ^ (temp>>20)) & MAX_NUMBER_OF_KEY_VALUE_PAIRS;
 }
 
 struct keyvalue_base
 {
 	__u64 key;
 	__u64 size;
-	char data[1024];
+	//char data[1024];
+	void *data;
 	// replace with char* data
-	// dont forget to allocate memory to data and copy cmd->kventry->data into it
+	// dont forget to allocate memory to data and copy ukv->kventry->data into it
 };
-typedef struct keyvalue_base keyvalue_set;
-typedef struct keyvalue_base keyvalue_get;
-typedef struct keyvalue_base keyvalue_delete;
+typedef struct keyvalue_base str_keyvalue_set;
+typedef struct keyvalue_base str_keyvalue_get;
+typedef struct keyvalue_base str_keyvalue_delete;
 
 struct dictnode 
 {
 	struct dictnode* next;
-	keyvalue_set* kventry;
+	struct keyvalue_base* kventry;
 	__u64 size; 
 };
 
@@ -117,9 +118,9 @@ static void initializeDictionary()
 	}
 }
 
-static long get_keyvalue(keyvalue_get* cmd)
+static long keyvalue_get(str_keyvalue_get* ukv)
 {
-	int key_to_be_fetched	= cmd->key;
+	int key_to_be_fetched	= hash(ukv->key);
 	struct dictnode* curr	= map->hashmap[key_to_be_fetched];
 	
 	rwlock_acquire_readlock(lock);
@@ -127,7 +128,7 @@ static long get_keyvalue(keyvalue_get* cmd)
 	if(curr == NULL)
 	{
 		#ifdef DEBUG_MODE_1
-			fprintf(stdout,"Requested key %llu is yet to be inserted in the map\n", cmd->key);
+			fprintf(stdout,"Requested key %llu is yet to be inserted in the map\n", ukv->key);
 		#endif
 		rwlock_release_readlock(lock);
 		return -1;
@@ -136,7 +137,7 @@ static long get_keyvalue(keyvalue_get* cmd)
 	{
 		while(curr != NULL)
 		{
-			if(curr->kventry->key	== cmd->key)
+			if(curr->kventry->key	== ukv->key)
 			{
 				#ifdef DEBUG_MODE_1
         				fprintf(stdout,"Read:\tkey: %llu\tsize: %llu\tdata: %s\n",curr->kventry->key, curr->size, curr->kventry->data);
@@ -148,7 +149,7 @@ static long get_keyvalue(keyvalue_get* cmd)
 		}
 		
 		#ifdef DEBUG_MODE_1
-			fprintf(stdout,"Requested key %llu is yet to be inserted in the map\n", cmd->key);
+			fprintf(stdout,"Requested key %llu is yet to be inserted in the map\n", ukv->key);
 		#endif
 		rwlock_release_readlock(lock);
 		return -1;
@@ -156,9 +157,9 @@ static long get_keyvalue(keyvalue_get* cmd)
 
 }
 
-static long delete_keyvalue(keyvalue_delete* cmd)
+static long delete_keyvalue(str_keyvalue_delete* ukv)
 {
-	int key_to_be_deleted = cmd->key;
+	int key_to_be_deleted = hash(ukv->key);
 	struct dictnode* curr = map->hashmap[key_to_be_deleted];
 
 	rwlock_acquire_writelock(lock);
@@ -171,7 +172,7 @@ static long delete_keyvalue(keyvalue_delete* cmd)
 		rwlock_release_writelock(lock);
 		return -1;
 	}
-	else if(curr->kventry->key	== cmd->key)
+	else if(curr->kventry->key	== ukv->key)
 	{
 		map->hashmap[key_to_be_deleted]	= curr->next;
 		free(curr);
@@ -183,7 +184,7 @@ static long delete_keyvalue(keyvalue_delete* cmd)
 		struct dictnode* prev	= curr;
 		while(curr != NULL)
 		{
-			if(curr->kventry->key	== cmd->key)
+			if(curr->kventry->key	== ukv->key)
 			{
 				prev->next	= curr->next;
 				free(curr);
@@ -202,10 +203,10 @@ static long delete_keyvalue(keyvalue_delete* cmd)
 	}
 }
 
-static long set_keyvalue( keyvalue_set* cmd )
+static long keyvalue_set( str_keyvalue_set* ukv )
 {
 	
-	int key_to_be_set = cmd->key;
+	int key_to_be_set = hash(ukv->key);
 	struct dictnode* val = map->hashmap[key_to_be_set];
 	
 	rwlock_acquire_writelock(lock);
@@ -214,14 +215,16 @@ static long set_keyvalue( keyvalue_set* cmd )
 	{
 	
 		struct dictnode* head = (struct dictnode*)malloc(sizeof(struct dictnode));
+		head->kventry = (struct keyvalue_base* ) malloc(sizeof(struct keyvalue_base));
 		if(head == NULL)
 		{
 			fprintf(stderr,"Memory allocation to node in dictionary failed!\n");
 			rwlock_release_writelock(lock);
 			exit(0);
 		}
-		head->kventry = cmd;
-		head->size = cmd->size;
+		head->size = ukv->size;
+		head->kventry->data	= (void *) malloc((head->size ) * (sizeof(void)));
+		head->kventry = ukv;
 		head->next = NULL;
 	
 		map->hashmap[key_to_be_set] = head;
@@ -235,19 +238,21 @@ static long set_keyvalue( keyvalue_set* cmd )
 		{	
 			if(val->kventry->key == key_to_be_set)
 			{	
-				strcpy(val->kventry->data, (cmd)->data);
+				strcpy(val->kventry->data, (ukv)->data);
 			}
 			else
 			{	
 				struct dictnode* head = (struct dictnode*)malloc(sizeof(struct dictnode));
+				head->kventry = (struct keyvalue_base* ) malloc(sizeof(struct keyvalue_base));
 				if(head == NULL)
 				{
 					fprintf(stderr,"Memory allocation to node in dictionary failed!\n");
 					rwlock_release_writelock(lock);
 					exit(0);
 				}
-				head->kventry = cmd;
-				head->size = cmd->size;
+				head->size = ukv->size;
+				head->kventry->data	= (void *) malloc((head->size ) * (sizeof(void)));
+				head->kventry = ukv;
 				head->next = NULL;
 				
 				val->next = head;
@@ -259,7 +264,7 @@ static long set_keyvalue( keyvalue_set* cmd )
 			{	
 				if(val->kventry->key == key_to_be_set)
 				{
-					strcpy(val->kventry->data,cmd->data);
+					strcpy(val->kventry->data,ukv->data);
 					rwlock_release_writelock(lock);
 					return 1;
 				}								
@@ -267,14 +272,16 @@ static long set_keyvalue( keyvalue_set* cmd )
 			}
 
 			struct dictnode* head = (struct dictnode*)malloc(sizeof(struct dictnode));
+			head->kventry = (struct keyvalue_base* ) malloc(sizeof(struct keyvalue_base));
 			if(head == NULL)
 			{
 				fprintf(stderr,"Memory allocation to node in dictionary failed!\n");
 				rwlock_release_writelock(lock);
 				exit(0);
 			}
-			head->kventry = cmd;
-			head->size = cmd->size;
+			head->size = ukv->size;
+			head->kventry->data	= (void *) malloc((head->size ) * (sizeof(void)));
+			head->kventry = ukv;
 			head->next = NULL;
 		
 			val->next = head;
@@ -322,27 +329,29 @@ void* consumer(int entries)
 
 long kv_set(__u64 key, __u64 size, void *data)
 {
-     	keyvalue_set * cmd = (keyvalue_set *) malloc(sizeof(keyvalue_set));
+     	str_keyvalue_set * cmd = (str_keyvalue_set *) malloc(sizeof(str_keyvalue_set));
      	cmd->key = key;     
      	cmd->size = size;
+	cmd->data = (void *) malloc( (cmd->size) * (sizeof(void)) );
      	strcpy(cmd->data, data);	
-     	//return set_keyvalue(&cmd);
-     	return set_keyvalue(cmd);
+     	//return keyvalue_set(&cmd);
+     	return keyvalue_set(cmd);
 }
 
 long kv_get(__u64 key, __u64 size, void *data)
 {
-     	keyvalue_get * cmd = (keyvalue_get *) malloc(sizeof(keyvalue_get));
+     	str_keyvalue_get * cmd = (str_keyvalue_get *) malloc(sizeof(str_keyvalue_get));
      	cmd->key = key;     
      	cmd->size = size;
+	cmd->data = (void *) malloc( (cmd->size) * (sizeof(void)) );
      	strcpy(cmd->data, data);	
-     	//return set_keyvalue(&cmd);
-     	return get_keyvalue(cmd);
+     	//return keyvalue_get(&cmd);
+     	return keyvalue_get(cmd);
 }
 
 long kv_delete( __u64 key)
 {
-     	keyvalue_delete * cmd = (keyvalue_delete *) malloc(sizeof(keyvalue_delete));
+     	str_keyvalue_delete * cmd = (str_keyvalue_delete *) malloc(sizeof(str_keyvalue_delete));
      	cmd->key = key;     
 	
 	return delete_keyvalue(cmd);
@@ -438,7 +447,6 @@ void* consumer()
 
 int main()
 {
-	printf("Begin\n");
 	pthread_t p[8];
 	pthread_t c[4];
 	pthread_t d[2];
@@ -455,12 +463,14 @@ int main()
 
 	// allcoate memory to map
 	initializeDictionary();	
+	printf("Begin\n");
 	
 	// write values insdide map
 	for(i = 0; i<8; i++)
 	{
 		pthread_create(&p[i], NULL, producer, NULL);
 	}
+	printf("Begin\n");
 	
 /*	for(i=0; i<2; i++)
 	{		
