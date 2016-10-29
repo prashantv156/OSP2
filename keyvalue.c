@@ -42,19 +42,20 @@
 #include <linux/moduleparam.h>
 #include <linux/poll.h>
 
+// added by ishan
 #define DEBUG_MODE_1
 #define  MAX_NUMBER_OF_KEY_VALUE_PAIRS 256
 
 //////////////////////////// READERS WRITERS LOCK ///////////////////////////////////
 
-typedef struct _rwlock_t
+typedef struct _read_write_Lock_t
 {
 	struct semaphore 	lock; // binary semaphore (basic lock)
 	struct semaphore 	writelock; // used to allow ONE writer or MANY readers
 	int 			readers; // count of readers reading in critical section
-} rwlock_t;
+} read_write_Lock_t;
 
-void rwlock_init(rwlock_t *rw)
+void read_write_Lock_init(read_write_Lock_t *rw)
 {
 	rw->readers 	= 0;
 	sema_init(&rw->lock, 1);
@@ -63,7 +64,7 @@ void rwlock_init(rwlock_t *rw)
 }
 
 
-void rwlock_acquire_readlock(rwlock_t *rw) 
+void read_write_Lock_acquire_readlock(read_write_Lock_t *rw) 
 {
 	if(down_interruptible(&rw->lock) != 0)
 	{
@@ -82,7 +83,7 @@ void rwlock_acquire_readlock(rwlock_t *rw)
 	up(&rw->lock);
 }
 
-void rwlock_release_readlock(rwlock_t *rw) 
+void read_write_Lock_release_readlock(read_write_Lock_t *rw) 
 {
 	if(down_interruptible(&rw->lock) != 0)
 	{
@@ -98,7 +99,7 @@ void rwlock_release_readlock(rwlock_t *rw)
 }
 
 
-void rwlock_acquire_writelock(rwlock_t *rw)
+void read_write_Lock_acquire_writelock(read_write_Lock_t *rw)
 {
 	if(down_interruptible(&rw->writelock) != 0)
 	{
@@ -107,18 +108,18 @@ void rwlock_acquire_writelock(rwlock_t *rw)
 	}
 }
  
-void rwlock_release_writelock(rwlock_t *rw)
+void read_write_Lock_release_writelock(read_write_Lock_t *rw)
 {	
 	up(&rw->writelock);
 }
 
-rwlock_t* lock = NULL;
+read_write_Lock_t* lock = NULL;
 
 /////////////////////////////////////////////////////////////////////////////////////
 
-static __u32 hash(__u64 key)
+static __u64 hash(__u64 key)
 {
-	int temp;
+	__u64 temp;
 	temp = key;
 	temp >>= 3;
 	return (key ^ (temp>>10) ^ (temp>>20)) & MAX_NUMBER_OF_KEY_VALUE_PAIRS;
@@ -133,9 +134,6 @@ struct keyvalue_base
 	// replace with char* data
 	// dont forget to allocate memory to data and copy ukv->kventry->data into it
 };
-typedef struct keyvalue_base str_keyvalue_set;
-typedef struct keyvalue_base str_keyvalue_get;
-typedef struct keyvalue_base str_keyvalue_delete;
 
 struct dictnode 
 {
@@ -152,23 +150,8 @@ struct dictionary
 struct dictionary* map = NULL;
 
 
-static void initializeDictionary()
-{
-	map = (struct dictionary*)kmalloc(sizeof(struct dictionary), GFP_KERNEL);	
-	if(map == NULL)
-	{
-		fprintf(stderr,"Memory allocation to map failed!\n");
-		exit(0);
-	}
-	int i = 0;
-	for(i=0; i< MAX_NUMBER_OF_KEY_VALUE_PAIRS; i++)
-	{
-		map->hashmap[i]	= NULL;
-	}
-}
-
-
 ////////////////////////////////////////////////////////////////////////////////////
+
 
 unsigned transaction_id;
 static void free_callback(void *data)
@@ -177,19 +160,22 @@ static void free_callback(void *data)
 
 static long keyvalue_get(struct keyvalue_get __user *ukv)
 {
-    struct keyvalue_get kv;
+    //struct keyvalue_get kv;
 
-	int key_to_be_fetched	= hash(ukv->key);
-	struct dictnode* curr	= map->hashmap[key_to_be_fetched];
+	__u64 key_to_be_fetched;
+	struct dictnode* curr;
 	
-	rwlock_acquire_readlock(lock);
+	key_to_be_fetched	= hash(ukv->key);
+	curr			= map->hashmap[key_to_be_fetched];
+	
+	read_write_Lock_acquire_readlock(lock);
 		
 	if(curr == NULL)
 	{
 		#ifdef DEBUG_MODE_1
 			printk(KERN_INFO "Requested key %llu is yet to be inserted in the map\n", ukv->key);
 		#endif
-		rwlock_release_readlock(lock);
+		read_write_Lock_release_readlock(lock);
 		//return -1;
 		return transaction_id++;
 	}
@@ -200,9 +186,9 @@ static long keyvalue_get(struct keyvalue_get __user *ukv)
 			if(curr->kventry->key	== ukv->key)
 			{
 				#ifdef DEBUG_MODE_1
-        				printk(KERN_INFO "Read:\tkey: %llu\tsize: %llu\tdata: %s\n",curr->kventry->key, curr->size, curr->kventry->data);
+        				printk(KERN_INFO "Read:\tkey: %llu\tsize: %llu\tdata: %s\n",curr->kventry->key, curr->size, (char *)curr->kventry->data);
 				#endif
-				rwlock_release_readlock(lock);
+				read_write_Lock_release_readlock(lock);
 				//return 1;
 				return transaction_id;
 			}
@@ -212,7 +198,7 @@ static long keyvalue_get(struct keyvalue_get __user *ukv)
 		#ifdef DEBUG_MODE_1
 			printk(KERN_INFO "Requested key %llu is yet to be inserted in the map\n", ukv->key);
 		#endif
-		rwlock_release_readlock(lock);
+		read_write_Lock_release_readlock(lock);
 		//return -1;
 		return transaction_id++;
 	}
@@ -222,31 +208,41 @@ static long keyvalue_get(struct keyvalue_get __user *ukv)
 
 static long keyvalue_set(struct keyvalue_set __user *ukv)
 {
-    struct keyvalue_set kv;
+    //struct keyvalue_set kv;
 
-	int key_to_be_set = hash(ukv->key);
-	struct dictnode* val = map->hashmap[key_to_be_set];
+	__u64 key_to_be_set;
+	struct dictnode* val;
+	struct dictnode* head ;
+
+	head	= NULL;
+	val	= NULL;
+
+	key_to_be_set		= hash(ukv->key);
+	val		 	= map->hashmap[key_to_be_set];
 	
-	rwlock_acquire_writelock(lock);
+	read_write_Lock_acquire_writelock(lock);
 
 	if(val == NULL)
 	{
 	
-		struct dictnode* head = (struct dictnode*)kmalloc(sizeof(struct dictnode), GFP_KERNEL);
-		head->kventry = (struct keyvalue_base* ) kmalloc(sizeof(struct keyvalue_base), GFP_KERNEL);
+		head		= (struct dictnode*)kmalloc(sizeof(struct dictnode), GFP_KERNEL);
+		head->kventry 	= (struct keyvalue_base* ) kmalloc(sizeof(struct keyvalue_base), GFP_KERNEL);
 		if(head == NULL)
 		{
 			printk(KERN_ERR "Memory allocation to node in dictionary failed!\n");
-			rwlock_release_writelock(lock);
-			exit(0);
+			read_write_Lock_release_writelock(lock);
+			//exit(0);
 		}
 		head->size = ukv->size;
 		head->kventry->data	= (void *) kmalloc((head->size ) * (sizeof(void)), GFP_KERNEL);
-		head->kventry = ukv;
+		head->kventry->size 	= ukv->size;
+		head->kventry->key	= ukv->key;
+		memcpy(head->kventry->data, ukv->data, ukv->size);
 		head->next = NULL;
-	
+				
+
 		map->hashmap[key_to_be_set] = head;
-		rwlock_release_writelock(lock);
+		read_write_Lock_release_writelock(lock);
 		//return 1;
 		return transaction_id++;
 
@@ -261,19 +257,21 @@ static long keyvalue_set(struct keyvalue_set __user *ukv)
 			}
 			else
 			{	
-				struct dictnode* head = (struct dictnode*)kmalloc(sizeof(struct dictnode), GFP_KERNEL);
-				head->kventry = (struct keyvalue_base* ) kmalloc(sizeof(struct keyvalue_base), GFP_KERNEL);
+				head 		= (struct dictnode*)kmalloc(sizeof(struct dictnode), GFP_KERNEL);
+				head->kventry 	= (struct keyvalue_base* ) kmalloc(sizeof(struct keyvalue_base), GFP_KERNEL);
 				if(head == NULL)
 				{
 					printk(KERN_ERR "Memory allocation to node in dictionary failed!\n");
-					rwlock_release_writelock(lock);
-					exit(0);
+					read_write_Lock_release_writelock(lock);
+					//exit(0);
 				}
 				head->size = ukv->size;
 				head->kventry->data	= (void *) kmalloc((head->size ) * (sizeof(void)), GFP_KERNEL);
-				head->kventry = ukv;
-				head->next = NULL;
+				head->kventry->size 	= ukv->size;
+				head->kventry->key	= ukv->key;
+				memcpy(head->kventry->data, ukv->data, ukv->size);
 				
+				head->next = NULL;
 				val->next = head;
 			}
 		}
@@ -281,32 +279,35 @@ static long keyvalue_set(struct keyvalue_set __user *ukv)
 		{
 			while(val->next != NULL)
 			{	
-				if(val->kventry->key == unk->key)
+				if(val->kventry->key == ukv->key)
 				{
 					strcpy(val->kventry->data,ukv->data);
-					rwlock_release_writelock(lock);
+					read_write_Lock_release_writelock(lock);
 					//return 1;
 					return transaction_id++;
 				}								
 				val = val->next;	
 			}
 
-			struct dictnode* head = (struct dictnode*)kmalloc(sizeof(struct dictnode), GFP_KERNEL);
-			head->kventry = (struct keyvalue_base* ) kmalloc(sizeof(struct keyvalue_base), GFP_KERNEL);
+			head		= (struct dictnode*)kmalloc(sizeof(struct dictnode), GFP_KERNEL);
+			head->kventry 	= (struct keyvalue_base* ) kmalloc(sizeof(struct keyvalue_base), GFP_KERNEL);
 			if(head == NULL)
 			{
 				printk(KERN_ERR "Memory allocation to node in dictionary failed!\n");
-				rwlock_release_writelock(lock);
-				exit(0);
+				read_write_Lock_release_writelock(lock);
+				//exit(0);
 			}
 			head->size = ukv->size;
 			head->kventry->data	= (void *) kmalloc((head->size ) * (sizeof(void)), GFP_KERNEL);
-			head->kventry = ukv;
+			head->kventry->size 	= ukv->size;
+			head->kventry->key	= ukv->key;
+			memcpy(head->kventry->data, ukv->data, ukv->size);
+			
 			head->next = NULL;
 		
 			val->next = head;
 		}
-		rwlock_release_writelock(lock);
+		read_write_Lock_release_writelock(lock);
 		//return 1;
 		return transaction_id++;
 	}
@@ -317,29 +318,32 @@ static long keyvalue_set(struct keyvalue_set __user *ukv)
 
 static long keyvalue_delete(struct keyvalue_delete __user *ukv)
 {
-    struct keyvalue_delete kv;
+    //struct keyvalue_delete kv;
 
-	int key_to_be_deleted = hash(ukv->key);
-	struct dictnode* curr = map->hashmap[key_to_be_deleted];
+	__u64 key_to_be_deleted;
+	struct dictnode* curr ;	
 
-	rwlock_acquire_writelock(lock);
+	key_to_be_deleted	= hash(ukv->key);
+	curr			= map->hashmap[key_to_be_deleted];
+
+	read_write_Lock_acquire_writelock(lock);
 
 	if(curr == NULL)
 	{
 		#ifdef DEBUG_MODE_1
 			printk(KERN_INFO "Map is empty. Cannot perform delete operation!\n");
 		#endif
-		rwlock_release_writelock(lock);
+		read_write_Lock_release_writelock(lock);
 		//return -1;
     		return transaction_id++;
 	}
 	else if(curr->kventry->key	== ukv->key)
 	{
 		map->hashmap[key_to_be_deleted]	= curr->next;
-		free(curr->kventry->data);
-		free(curr->kventry);
-		free(curr);
-		rwlock_release_writelock(lock);
+		kfree(curr->kventry->data);
+		kfree(curr->kventry);
+		kfree(curr);
+		read_write_Lock_release_writelock(lock);
 		//return 1;
     		return transaction_id++;
 	}
@@ -351,10 +355,10 @@ static long keyvalue_delete(struct keyvalue_delete __user *ukv)
 			if(curr->kventry->key	== ukv->key)
 			{
 				prev->next	= curr->next;
-				free(curr->kventry->data);
-				free(curr->kventry);
-				free(curr);
-				rwlock_release_writelock(lock);
+				kfree(curr->kventry->data);
+				kfree(curr->kventry);
+				kfree(curr);
+				read_write_Lock_release_writelock(lock);
 				//return 1;
     				return transaction_id++;
 			}
@@ -365,7 +369,7 @@ static long keyvalue_delete(struct keyvalue_delete __user *ukv)
 		#ifdef DEBUG_MODE_1
 			printk(KERN_INFO "The requested key is non-existant in the map!\n");
 		#endif
-		rwlock_release_writelock(lock);
+		read_write_Lock_release_writelock(lock);
 		//return -1;
     		return transaction_id++;
 	}
@@ -419,6 +423,21 @@ static struct miscdevice keyvalue_dev = {
 static int __init keyvalue_init(void)
 {
     int ret;
+	
+	// added by ishan
+	__u64 i;
+	map = (struct dictionary*)kmalloc(sizeof(struct dictionary), GFP_KERNEL);	
+	if(map == NULL)
+	{
+		printk(KERN_ERR "Memory allocation to map failed!\n");
+		//exit(0);
+	}
+	for(i=0; i< MAX_NUMBER_OF_KEY_VALUE_PAIRS; i++)
+	{
+		map->hashmap[i]	= NULL;
+	}
+	// initialization of map ends here
+
 
     if ((ret = misc_register(&keyvalue_dev)))
         printk(KERN_ERR "Unable to register \"keyvalue\" misc device\n");
@@ -427,6 +446,8 @@ static int __init keyvalue_init(void)
 
 static void __exit keyvalue_exit(void)
 {
+	// added by Ishan
+	kfree(map);
     misc_deregister(&keyvalue_dev);
 }
 
