@@ -65,31 +65,51 @@ void rwlock_init(rwlock_t *rw)
 
 void rwlock_acquire_readlock(rwlock_t *rw) 
 {
-	sem_wait(&rw->lock);
+	if(down_interruptible(&rw->lock) != 0)
+	{
+		printk(KERN_INFO "could not hold semaphore used for rw->lock");
+		return;
+	}
 	rw->readers++;
 	if (rw->readers == 1)
-		sem_wait(&rw->writelock); // first reader acquires writelock
-	sem_post(&rw->lock);
+	{
+		if(down_interruptible(&rw->writelock) != 0) // first reader acquires writelock
+		{
+			printk(KERN_INFO "could not hold semaphore used for rw->writelock");
+			return;
+		}
+	}
+	up(&rw->lock);
 }
 
 void rwlock_release_readlock(rwlock_t *rw) 
 {
-	sem_wait(&rw->lock);
+	if(down_interruptible(&rw->lock) != 0)
+	{
+		printk(KERN_INFO "could not hold semaphore used for rw->lock");
+		return;
+	}
 	rw->readers--;
 	if (rw->readers == 0)
-		sem_post(&rw->writelock); // last reader releases writelock
-	sem_post(&rw->lock);
+	{
+		up(&rw->writelock); // last reader releases writelock
+	}
+	up(&rw->lock);
 }
 
 
 void rwlock_acquire_writelock(rwlock_t *rw)
 {
-	sem_wait(&rw->writelock);
+	if(down_interruptible(&rw->writelock) != 0)
+	{
+		printk(KERN_INFO "could not hold semaphore used for rw->writelock");
+		return;
+	}
 }
  
 void rwlock_release_writelock(rwlock_t *rw)
 {	
-	sem_post(&rw->writelock);
+	up(&rw->writelock);
 }
 
 rwlock_t* lock = NULL;
