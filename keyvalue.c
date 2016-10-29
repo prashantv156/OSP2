@@ -49,16 +49,17 @@
 
 typedef struct _rwlock_t
 {
-	sem_t lock; // binary semaphore (basic lock)
-	sem_t writelock; // used to allow ONE writer or MANY readers
-	int readers; // count of readers reading in critical section
+	struct semaphore 	lock; // binary semaphore (basic lock)
+	struct semaphore 	writelock; // used to allow ONE writer or MANY readers
+	int 			readers; // count of readers reading in critical section
 } rwlock_t;
 
 void rwlock_init(rwlock_t *rw)
 {
-	rw->readers = 0;
-	sem_init(&rw->lock, 0, 1);
-	sem_init(&rw->writelock, 0, 1);
+	rw->readers 	= 0;
+	sema_init(&rw->lock, 1);
+	sema_init(&rw->writelock, 1);
+	// DECLARE_MUTEX(name_of_semaphore)
 }
 
 
@@ -234,7 +235,7 @@ static long keyvalue_set(struct keyvalue_set __user *ukv)
 	{	
 		if(val->next == NULL)
 		{	
-			if(val->kventry->key == key_to_be_set)
+			if(val->kventry->key == ukv->key)
 			{	
 				strcpy(val->kventry->data, (ukv)->data);
 			}
@@ -260,7 +261,7 @@ static long keyvalue_set(struct keyvalue_set __user *ukv)
 		{
 			while(val->next != NULL)
 			{	
-				if(val->kventry->key == key_to_be_set)
+				if(val->kventry->key == unk->key)
 				{
 					strcpy(val->kventry->data,ukv->data);
 					rwlock_release_writelock(lock);
@@ -315,6 +316,8 @@ static long keyvalue_delete(struct keyvalue_delete __user *ukv)
 	else if(curr->kventry->key	== ukv->key)
 	{
 		map->hashmap[key_to_be_deleted]	= curr->next;
+		free(curr->kventry->data);
+		free(curr->kventry);
 		free(curr);
 		rwlock_release_writelock(lock);
 		//return 1;
@@ -328,6 +331,8 @@ static long keyvalue_delete(struct keyvalue_delete __user *ukv)
 			if(curr->kventry->key	== ukv->key)
 			{
 				prev->next	= curr->next;
+				free(curr->kventry->data);
+				free(curr->kventry);
 				free(curr);
 				rwlock_release_writelock(lock);
 				//return 1;
