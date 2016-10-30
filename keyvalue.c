@@ -164,6 +164,7 @@ static long keyvalue_get(struct keyvalue_get __user *ukv)
 
 	__u64 key_to_be_fetched;
 	struct dictnode* curr;
+	__u64 i;
 	
 	key_to_be_fetched	= hash(ukv->key);
 	curr			= map->hashmap[key_to_be_fetched];
@@ -176,8 +177,7 @@ static long keyvalue_get(struct keyvalue_get __user *ukv)
 			printk(KERN_INFO "Requested key %llu is yet to be inserted in the map\n", ukv->key);
 		#endif
 		read_write_Lock_release_readlock(lock);
-		//return -1;
-		return transaction_id++;
+		return -1;
 	}
 	else
 	{
@@ -188,9 +188,15 @@ static long keyvalue_get(struct keyvalue_get __user *ukv)
 				#ifdef DEBUG_MODE_1
         				printk(KERN_INFO "Read:\tkey: %llu\tsize: %llu\tdata: %s\n",curr->kventry->key, curr->size, (char *)curr->kventry->data);
 				#endif
+				
+				ukv->size	= curr->kventry->size;
+				memcpy(ukv->data, curr->kventry->data, ukv->size);
+				// WARNING: The user might not have allocated memory to ukv->data
+				// Possible bug ishan
+
 				read_write_Lock_release_readlock(lock);
 				//return 1;
-				return transaction_id;
+				return transaction_id++;
 			}
 			curr	= curr->next;
 		}
@@ -199,11 +205,10 @@ static long keyvalue_get(struct keyvalue_get __user *ukv)
 			printk(KERN_INFO "Requested key %llu is yet to be inserted in the map\n", ukv->key);
 		#endif
 		read_write_Lock_release_readlock(lock);
-		//return -1;
-		return transaction_id++;
+		return -1;
 	}
 
-    return transaction_id++;
+    //return transaction_id++;
 }
 
 static long keyvalue_set(struct keyvalue_set __user *ukv)
@@ -226,13 +231,14 @@ static long keyvalue_set(struct keyvalue_set __user *ukv)
 	{
 	
 		head		= (struct dictnode*)kmalloc(sizeof(struct dictnode), GFP_KERNEL);
-		head->kventry 	= (struct keyvalue_base* ) kmalloc(sizeof(struct keyvalue_base), GFP_KERNEL);
 		if(head == NULL)
 		{
 			printk(KERN_ERR "Memory allocation to node in dictionary failed!\n");
 			read_write_Lock_release_writelock(lock);
+			return -1;
 			//exit(0);
 		}
+		head->kventry 	= (struct keyvalue_base* ) kmalloc(sizeof(struct keyvalue_base), GFP_KERNEL);
 		head->size = ukv->size;
 		head->kventry->data	= (void *) kmalloc((head->size ) * (sizeof(void)), GFP_KERNEL);
 		head->kventry->size 	= ukv->size;
@@ -260,13 +266,14 @@ static long keyvalue_set(struct keyvalue_set __user *ukv)
 			else
 			{	
 				head 		= (struct dictnode*)kmalloc(sizeof(struct dictnode), GFP_KERNEL);
-				head->kventry 	= (struct keyvalue_base* ) kmalloc(sizeof(struct keyvalue_base), GFP_KERNEL);
 				if(head == NULL)
 				{
 					printk(KERN_ERR "Memory allocation to node in dictionary failed!\n");
 					read_write_Lock_release_writelock(lock);
+					return -1;
 					//exit(0);
 				}
+				head->kventry 	= (struct keyvalue_base* ) kmalloc(sizeof(struct keyvalue_base), GFP_KERNEL);
 				head->size = ukv->size;
 				head->kventry->data	= (void *) kmalloc((head->size ) * (sizeof(void)), GFP_KERNEL);
 				head->kventry->size 	= ukv->size;
@@ -298,13 +305,14 @@ static long keyvalue_set(struct keyvalue_set __user *ukv)
 			}
 
 			head		= (struct dictnode*)kmalloc(sizeof(struct dictnode), GFP_KERNEL);
-			head->kventry 	= (struct keyvalue_base* ) kmalloc(sizeof(struct keyvalue_base), GFP_KERNEL);
 			if(head == NULL)
 			{
 				printk(KERN_ERR "Memory allocation to node in dictionary failed!\n");
 				read_write_Lock_release_writelock(lock);
+				return -1;
 				//exit(0);
 			}
+			head->kventry 	= (struct keyvalue_base* ) kmalloc(sizeof(struct keyvalue_base), GFP_KERNEL);
 			head->size = ukv->size;
 			head->kventry->data	= (void *) kmalloc((head->size ) * (sizeof(void)), GFP_KERNEL);
 			head->kventry->size 	= ukv->size;
@@ -320,8 +328,8 @@ static long keyvalue_set(struct keyvalue_set __user *ukv)
 		return transaction_id++;
 	}
 
-	//return 0;
-    return transaction_id++;
+	return -1;
+    //return transaction_id++;
 }
 
 static long keyvalue_delete(struct keyvalue_delete __user *ukv)
@@ -342,8 +350,7 @@ static long keyvalue_delete(struct keyvalue_delete __user *ukv)
 			printk(KERN_INFO "Map is empty. Cannot perform delete operation!\n");
 		#endif
 		read_write_Lock_release_writelock(lock);
-		//return -1;
-    		return transaction_id++;
+		return -1;
 	}
 	else if(curr->kventry->key	== ukv->key)
 	{
@@ -352,7 +359,6 @@ static long keyvalue_delete(struct keyvalue_delete __user *ukv)
 		kfree(curr->kventry);
 		kfree(curr);
 		read_write_Lock_release_writelock(lock);
-		//return 1;
     		return transaction_id++;
 	}
 	else
@@ -367,7 +373,6 @@ static long keyvalue_delete(struct keyvalue_delete __user *ukv)
 				kfree(curr->kventry);
 				kfree(curr);
 				read_write_Lock_release_writelock(lock);
-				//return 1;
     				return transaction_id++;
 			}
 			prev	= curr;
@@ -378,12 +383,11 @@ static long keyvalue_delete(struct keyvalue_delete __user *ukv)
 			printk(KERN_INFO "The requested key is non-existant in the map!\n");
 		#endif
 		read_write_Lock_release_writelock(lock);
-		//return -1;
-    		return transaction_id++;
+		return -1;
 	}
 
-
-    return transaction_id++;
+	return -1;
+   // return transaction_id++;
 }
 
 //Added by Hung-Wei
