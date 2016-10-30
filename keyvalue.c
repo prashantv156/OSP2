@@ -164,7 +164,6 @@ static long keyvalue_get(struct keyvalue_get __user *ukv)
 
 	__u64 key_to_be_fetched;
 	struct dictnode* curr;
-	__u64 i;
 	
 	key_to_be_fetched	= hash(ukv->key);
 	curr			= map->hashmap[key_to_be_fetched];
@@ -189,8 +188,8 @@ static long keyvalue_get(struct keyvalue_get __user *ukv)
         				printk(KERN_INFO "Read:\tkey: %llu\tsize: %llu\tdata: %s\n",curr->kventry->key, curr->size, (char *)curr->kventry->data);
 				#endif
 				
-				ukv->size	= curr->kventry->size;
-				memcpy(ukv->data, curr->kventry->data, ukv->size);
+			//	ukv->size	= curr->kventry->size;
+				memcpy(ukv->data, curr->kventry->data, curr->kventry->size);
 				// WARNING: The user might not have allocated memory to ukv->data
 				// Possible bug ishan
 
@@ -439,6 +438,11 @@ static int __init keyvalue_init(void)
 	// added by ishan
 	__u64 i;
 
+	lock	= (read_write_Lock_t*) kmalloc(sizeof(read_write_Lock_t), GFP_KERNEL);
+	if(lock == NULL)
+	{
+		printk(KERN_ERR "KEYVALUE device: Memory allocation to lock variable failed!");
+	}
 	read_write_Lock_init(lock);
 	#ifdef DEBUG_MODE_1
 		printk(KERN_INFO "KEYVALUE device: just initialized semaphores!\n");
