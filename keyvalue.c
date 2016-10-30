@@ -44,7 +44,7 @@
 
 // added by ishan
 #define DEBUG_MODE_1
-#define  MAX_NUMBER_OF_KEY_VALUE_PAIRS 256
+#define MAX_NUMBER_OF_KEY_VALUE_PAIRS 256
 
 //////////////////////////// READERS WRITERS LOCK ///////////////////////////////////
 
@@ -238,12 +238,14 @@ static long keyvalue_set(struct keyvalue_set __user *ukv)
 		head->kventry->size 	= ukv->size;
 		head->kventry->key	= ukv->key;
 		memcpy(head->kventry->data, ukv->data, ukv->size);
-		head->next = NULL;
-				
+		head->next = NULL;			
 
 		map->hashmap[key_to_be_set] = head;
 		read_write_Lock_release_writelock(lock);
-		//return 1;
+		//return 1;  
+		#ifdef DEBUG_MODE_1
+			printk(KERN_INFO "KEYVALUE device: Write: First Node added at map[%llu]: \n",key_to_be_set);
+		#endif
 		return transaction_id++;
 
 	}
@@ -273,6 +275,9 @@ static long keyvalue_set(struct keyvalue_set __user *ukv)
 				
 				head->next = NULL;
 				val->next = head;
+				#ifdef DEBUG_MODE_1
+					printk(KERN_INFO "KEYVALUE device: Write: New Node inserted at map[%llu]: \n",key_to_be_set);
+				#endif
 			}
 		}
 		else
@@ -284,6 +289,9 @@ static long keyvalue_set(struct keyvalue_set __user *ukv)
 					strcpy(val->kventry->data,ukv->data);
 					read_write_Lock_release_writelock(lock);
 					//return 1;
+					#ifdef DEBUG_MODE_1
+						printk(KERN_INFO "KEYVALUE device: Write: Node overwritten at map[%llu]: \n",key_to_be_set);
+					#endif
 					return transaction_id++;
 				}								
 				val = val->next;	
@@ -426,12 +434,21 @@ static int __init keyvalue_init(void)
 	
 	// added by ishan
 	__u64 i;
+
+	read_write_Lock_init(lock);
+	#ifdef DEBUG_MODE_1
+		printk(KERN_INFO "KEYVALUE device: just initialized semaphores!\n");
+	#endif
+
 	map = (struct dictionary*)kmalloc(sizeof(struct dictionary), GFP_KERNEL);	
 	if(map == NULL)
 	{
 		printk(KERN_ERR "Memory allocation to map failed!\n");
 		//exit(0);
 	}
+	#ifdef DEBUG_MODE_1
+		printk(KERN_INFO "KEYVALUE device: allocated memory to map!\n");
+	#endif
 	for(i=0; i< MAX_NUMBER_OF_KEY_VALUE_PAIRS; i++)
 	{
 		map->hashmap[i]	= NULL;
@@ -447,7 +464,25 @@ static int __init keyvalue_init(void)
 static void __exit keyvalue_exit(void)
 {
 	// added by Ishan
+	__u64 i;
+	struct dictnode * curr_node;
+	struct dictnode * temp_node;
+	for(i =0; i<MAX_NUMBER_OF_KEY_VALUE_PAIRS; i++)
+	{
+		curr_node	= map->hashmap[i];
+		while(curr_node != NULL)
+		{
+			temp_node	= curr_node;
+			curr_node	= curr_node->next;
+			kfree(temp_node->kventry->data);
+			kfree(temp_node->kventry);
+			kfree(temp_node);
+		}
+	}
 	kfree(map);
+	#ifdef DEBUG_MODE_1
+		printk(KERN_INFO "KEYVALUE device: deallocated all memory!");
+	#endif
     misc_deregister(&keyvalue_dev);
 }
 
