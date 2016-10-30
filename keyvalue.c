@@ -264,6 +264,10 @@ static long keyvalue_set(struct keyvalue_set __user *ukv)
 				//strcpy(val->kventry->data, (ukv)->data);
 				val->kventry->size	= ukv->size;
 				memcpy(val->kventry->data, ukv->data, ukv->size);
+				#ifdef DEBUG_MODE_1
+					printk(KERN_INFO "KEYVALUE device: Write: First Node Overwritten at map[%llu], size: %llu, key: %llu, data: %s: \n",key_to_be_set, val->kventry->size, val->kventry->key,(char*) val->kventry->data);
+				#endif
+				return transaction_id++;
 			}
 			else
 			{	
@@ -286,8 +290,9 @@ static long keyvalue_set(struct keyvalue_set __user *ukv)
 				val->next = head;
 				#ifdef DEBUG_MODE_1
 					//printk(KERN_INFO "KEYVALUE device: Write: New Node inserted at map[%llu]: \n",key_to_be_set);
-					printk(KERN_INFO "KEYVALUE device: Write: New Node inserted at tail at map[%llu], size: %llu, key: %llu, data: %s: \n",key_to_be_set, head->kventry->size, head->kventry->key, (char*)head->kventry->data);
+					printk(KERN_INFO "KEYVALUE device: Write: Second Node inserted at tail at map[%llu], size: %llu, key: %llu, data: %s: \n",key_to_be_set, head->kventry->size, head->kventry->key, (char*)head->kventry->data);
 				#endif
+				return transaction_id++;
 			}
 		}
 		else
@@ -296,7 +301,9 @@ static long keyvalue_set(struct keyvalue_set __user *ukv)
 			{	
 				if(val->kventry->key == ukv->key)
 				{
-					strcpy(val->kventry->data,ukv->data);
+					val->kventry->size	= ukv->size;
+					memcpy(val->kventry->data, ukv->data, ukv->size);
+					//strcpy(val->kventry->data,ukv->data);
 					read_write_Lock_release_writelock(lock);
 					//return 1;
 					#ifdef DEBUG_MODE_1
@@ -326,6 +333,10 @@ static long keyvalue_set(struct keyvalue_set __user *ukv)
 			head->next = NULL;
 		
 			val->next = head;
+			#ifdef DEBUG_MODE_1
+				printk(KERN_INFO "KEYVALUE device: Write: New Node inserted at tail at map[%llu], size: %llu, key: %llu, data: %s: \n",key_to_be_set, head->kventry->size, head->kventry->key, (char*)head->kventry->data);
+			#endif
+			return transaction_id++;
 		}
 		read_write_Lock_release_writelock(lock);
 		//return 1;
