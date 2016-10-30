@@ -44,7 +44,7 @@
 
 // added by ishan
 #define DEBUG_MODE_1
-#define MAX_NUMBER_OF_KEY_VALUE_PAIRS 256
+#define MAX_NUMBER_OF_KEY_VALUE_PAIRS 8
 
 //////////////////////////// READERS WRITERS LOCK ///////////////////////////////////
 
@@ -119,10 +119,11 @@ read_write_Lock_t* lock = NULL;
 
 static __u64 hash(__u64 key)
 {
-	__u64 temp;
-	temp = key;
-	temp >>= 3;
-	return (key ^ (temp>>10) ^ (temp>>20)) & MAX_NUMBER_OF_KEY_VALUE_PAIRS;
+	return (key%MAX_NUMBER_OF_KEY_VALUE_PAIRS);
+//	__u64 temp;
+//	temp = key;
+//	temp >>= 3;
+//	return (key ^ (temp>>10) ^ (temp>>20)) & MAX_NUMBER_OF_KEY_VALUE_PAIRS;
 }
 
 struct keyvalue_base
@@ -139,7 +140,6 @@ struct dictnode
 {
 	struct dictnode* next;
 	struct keyvalue_base* kventry;
-	__u64 size; 
 };
 
 struct dictionary
@@ -185,11 +185,12 @@ static long keyvalue_get(struct keyvalue_get __user *ukv)
 			if(curr->kventry->key	== ukv->key)
 			{
 				#ifdef DEBUG_MODE_1
-        				printk(KERN_INFO "Read:\tkey: %llu\tsize: %llu\tdata: %s\n",curr->kventry->key, curr->size, (char *)curr->kventry->data);
+        				printk(KERN_INFO "Read:\tkey: %llu\tsize: %llu\tdata: %s\n",curr->kventry->key, curr->kventry->size, (char *)curr->kventry->data);
 				#endif
 				
-			//	ukv->size	= curr->kventry->size;
 				memcpy(ukv->data, curr->kventry->data, curr->kventry->size);
+				ukv->size	= curr->kventry->size;
+				
 				// WARNING: The user might not have allocated memory to ukv->data
 				// Possible bug ishan
 
@@ -238,9 +239,9 @@ static long keyvalue_set(struct keyvalue_set __user *ukv)
 			//exit(0);
 		}
 		head->kventry 	= (struct keyvalue_base* ) kmalloc(sizeof(struct keyvalue_base), GFP_KERNEL);
-		head->size = ukv->size;
-		head->kventry->data	= (void *) kmalloc((head->size ) * (sizeof(void)), GFP_KERNEL);
+		//head->size = ukv->size;
 		head->kventry->size 	= ukv->size;
+		head->kventry->data	= (void *) kmalloc((head->kventry->size ) * (sizeof(void)), GFP_KERNEL);
 		head->kventry->key	= ukv->key;
 		memcpy(head->kventry->data, ukv->data, ukv->size);
 		head->next = NULL;			
@@ -249,7 +250,7 @@ static long keyvalue_set(struct keyvalue_set __user *ukv)
 		read_write_Lock_release_writelock(lock);
 		//return 1;  
 		#ifdef DEBUG_MODE_1
-			printk(KERN_INFO "KEYVALUE device: Write: First Node added at map[%llu]: \n",key_to_be_set);
+			printk(KERN_INFO "KEYVALUE device: Write: First Node added at map[%llu], size: %llu, key: %llu, data: %s: \n",key_to_be_set, head->kventry->size, head->kventry->key,(char*) head->kventry->data);
 		#endif
 		return transaction_id++;
 
@@ -260,7 +261,9 @@ static long keyvalue_set(struct keyvalue_set __user *ukv)
 		{	
 			if(val->kventry->key == ukv->key)
 			{	
-				strcpy(val->kventry->data, (ukv)->data);
+				//strcpy(val->kventry->data, (ukv)->data);
+				val->kventry->size	= ukv->size;
+				memcpy(val->kventry->data, ukv->data, ukv->size);
 			}
 			else
 			{	
@@ -273,16 +276,17 @@ static long keyvalue_set(struct keyvalue_set __user *ukv)
 					//exit(0);
 				}
 				head->kventry 	= (struct keyvalue_base* ) kmalloc(sizeof(struct keyvalue_base), GFP_KERNEL);
-				head->size = ukv->size;
-				head->kventry->data	= (void *) kmalloc((head->size ) * (sizeof(void)), GFP_KERNEL);
+				//head->size = ukv->size;
 				head->kventry->size 	= ukv->size;
+				head->kventry->data	= (void *) kmalloc((head->kventry->size ) * (sizeof(void)), GFP_KERNEL);
 				head->kventry->key	= ukv->key;
 				memcpy(head->kventry->data, ukv->data, ukv->size);
 				
 				head->next = NULL;
 				val->next = head;
 				#ifdef DEBUG_MODE_1
-					printk(KERN_INFO "KEYVALUE device: Write: New Node inserted at map[%llu]: \n",key_to_be_set);
+					//printk(KERN_INFO "KEYVALUE device: Write: New Node inserted at map[%llu]: \n",key_to_be_set);
+					printk(KERN_INFO "KEYVALUE device: Write: New Node inserted at tail at map[%llu], size: %llu, key: %llu, data: %s: \n",key_to_be_set, head->kventry->size, head->kventry->key, (char*)head->kventry->data);
 				#endif
 			}
 		}
@@ -296,7 +300,8 @@ static long keyvalue_set(struct keyvalue_set __user *ukv)
 					read_write_Lock_release_writelock(lock);
 					//return 1;
 					#ifdef DEBUG_MODE_1
-						printk(KERN_INFO "KEYVALUE device: Write: Node overwritten at map[%llu]: \n",key_to_be_set);
+						//printk(KERN_INFO "KEYVALUE device: Write: Node overwritten at map[%llu]: \n",key_to_be_set);
+						printk(KERN_INFO "KEYVALUE device: Write: Node overwritten at map[%llu], size: %llu, key: %llu, data: %s: \n",key_to_be_set, val->kventry->size, val->kventry->key, (char *)val->kventry->data);
 					#endif
 					return transaction_id++;
 				}								
@@ -312,9 +317,9 @@ static long keyvalue_set(struct keyvalue_set __user *ukv)
 				//exit(0);
 			}
 			head->kventry 	= (struct keyvalue_base* ) kmalloc(sizeof(struct keyvalue_base), GFP_KERNEL);
-			head->size = ukv->size;
-			head->kventry->data	= (void *) kmalloc((head->size ) * (sizeof(void)), GFP_KERNEL);
+			//head->size = ukv->size;
 			head->kventry->size 	= ukv->size;
+			head->kventry->data	= (void *) kmalloc((head->kventry->size ) * (sizeof(void)), GFP_KERNEL);
 			head->kventry->key	= ukv->key;
 			memcpy(head->kventry->data, ukv->data, ukv->size);
 			
