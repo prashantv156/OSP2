@@ -248,6 +248,7 @@ static long keyvalue_set(struct keyvalue_set __user *ukv)
 
 	__u64 key_to_be_set;
 	struct dictnode* val;
+	struct dictnode* prev;
 	struct dictnode* head ;
 
 	head	= NULL;
@@ -307,6 +308,7 @@ static long keyvalue_set(struct keyvalue_set __user *ukv)
 			if(val->kventry->key == ukv->key)
 			{	
 				//strcpy(val->kventry->data, (ukv)->data);
+				//memset(val->kventry->data,0,val->kventry->size);
 				val->kventry->size	= ukv->size;
 				memcpy(val->kventry->data, ukv->data, ukv->size);
 				#ifdef DEBUG_MODE_1
@@ -360,10 +362,12 @@ static long keyvalue_set(struct keyvalue_set __user *ukv)
 		else
 		{
 			//while(val->next != NULL)
+			prev	= val;
 			while(val != NULL)
 			{	
 				if(val->kventry->key == ukv->key)
 				{
+					//memset(val->kventry->data,0,val->kventry->size);
 					val->kventry->size	= ukv->size;
 					memcpy(val->kventry->data, ukv->data, ukv->size);
 					//strcpy(val->kventry->data,ukv->data);
@@ -380,6 +384,7 @@ static long keyvalue_set(struct keyvalue_set __user *ukv)
 					//return 1;
 					return transaction_id++;
 				}								
+				prev	= val;
 				val = val->next;	
 			}
 
@@ -405,7 +410,8 @@ static long keyvalue_set(struct keyvalue_set __user *ukv)
 			
 			head->next = NULL;
 		
-			val->next = head;
+			//val->next = head;
+			prev->next = head;
 			#ifdef DEBUG_MODE_1
 				printk(KERN_INFO "KEYVALUE device: Write: New Node inserted at tail at map[%llu], size: %llu, key: %llu, data: %s: \n",key_to_be_set, head->kventry->size, head->kventry->key, (char*)head->kventry->data);
 			#endif
