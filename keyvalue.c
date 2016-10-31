@@ -43,11 +43,15 @@
 #include <linux/poll.h>
 
 // added by ishan
+#include <linux/spinlock.h>
 #define DEBUG_MODE_1
 #define MAX_NUMBER_OF_KEY_VALUE_PAIRS 8
+//#define IMPLEMENTED_RWLOCK
+#define LINUX_RWLOCK
 
 //////////////////////////// READERS WRITERS LOCK ///////////////////////////////////
 
+#ifdef IMPLEMENTED_RWLOCK
 typedef struct _read_write_Lock_t
 {
 	struct semaphore 	lock; // binary semaphore (basic lock)
@@ -115,6 +119,13 @@ void read_write_Lock_release_writelock(read_write_Lock_t *rw)
 
 read_write_Lock_t* lock = NULL;
 
+#endif
+
+#ifdef LINUX_RWLOCK
+//rwlock_t mr_rwlock	= RW_LOCK_UNLOCKED; // static
+rwlock_t mr_rwlock;	// dynamic
+#endif
+
 /////////////////////////////////////////////////////////////////////////////////////
 
 static __u64 hash(__u64 key)
@@ -167,15 +178,25 @@ static long keyvalue_get(struct keyvalue_get __user *ukv)
 	
 	key_to_be_fetched	= hash(ukv->key);
 	curr			= map->hashmap[key_to_be_fetched];
-	
+
+	#ifdef IMPLEMENTED_RWLOCK
 	read_write_Lock_acquire_readlock(lock);
-		
+	#endif
+	#ifdef LINUX_RWLOCK
+		read_lock(&mr_rwlock);
+	#endif
+	
 	if(curr == NULL)
 	{
 		#ifdef DEBUG_MODE_1
 			printk(KERN_INFO "Requested key %llu is yet to be inserted in the map\n", ukv->key);
 		#endif
+		#ifdef IMPLEMENTED_RWLOCK
 		read_write_Lock_release_readlock(lock);
+		#endif
+		#ifdef LINUX_RWLOCK
+			read_unlock(&mr_rwlock);
+		#endif
 		return -1;
 	}
 	else
@@ -194,7 +215,12 @@ static long keyvalue_get(struct keyvalue_get __user *ukv)
 				// WARNING: The user might not have allocated memory to ukv->data
 				// Possible bug ishan
 
+				#ifdef IMPLEMENTED_RWLOCK
 				read_write_Lock_release_readlock(lock);
+				#endif
+				#ifdef LINUX_RWLOCK
+					read_unlock(&mr_rwlock);
+				#endif
 				//return 1;
 				return transaction_id++;
 			}
@@ -204,7 +230,12 @@ static long keyvalue_get(struct keyvalue_get __user *ukv)
 		#ifdef DEBUG_MODE_1
 			printk(KERN_INFO "Requested key %llu is yet to be inserted in the map\n", ukv->key);
 		#endif
+		#ifdef IMPLEMENTED_RWLOCK
 		read_write_Lock_release_readlock(lock);
+		#endif
+		#ifdef LINUX_RWLOCK
+			read_unlock(&mr_rwlock);
+		#endif
 		return -1;
 	}
 
@@ -224,9 +255,13 @@ static long keyvalue_set(struct keyvalue_set __user *ukv)
 
 	key_to_be_set		= hash(ukv->key);
 	val		 	= map->hashmap[key_to_be_set];
-	
+	#ifdef IMPLEMENTED_RWLOCK
 	read_write_Lock_acquire_writelock(lock);
-
+	#endif
+	#ifdef LINUX_RWLOCK
+		write_lock(&mr_rwlock);
+	#endif
+	
 	if(val == NULL)
 	{
 	
@@ -234,7 +269,12 @@ static long keyvalue_set(struct keyvalue_set __user *ukv)
 		if(head == NULL)
 		{
 			printk(KERN_ERR "Memory allocation to node in dictionary failed!\n");
+			#ifdef IMPLEMENTED_RWLOCK
 			read_write_Lock_release_writelock(lock);
+			#endif
+			#ifdef LINUX_RWLOCK
+				write_unlock(&mr_rwlock);
+			#endif
 			return -1;
 			//exit(0);
 		}
@@ -247,11 +287,16 @@ static long keyvalue_set(struct keyvalue_set __user *ukv)
 		head->next = NULL;			
 
 		map->hashmap[key_to_be_set] = head;
-		read_write_Lock_release_writelock(lock);
-		//return 1;  
 		#ifdef DEBUG_MODE_1
 			printk(KERN_INFO "KEYVALUE device: Write: First Node added at map[%llu], size: %llu, key: %llu, data: %s: \n",key_to_be_set, head->kventry->size, head->kventry->key,(char*) head->kventry->data);
 		#endif
+		#ifdef IMPLEMENTED_RWLOCK
+		read_write_Lock_release_writelock(lock);
+		#endif
+		#ifdef LINUX_RWLOCK
+			write_unlock(&mr_rwlock);
+		#endif
+		//return 1;  
 		return transaction_id++;
 
 	}
@@ -267,6 +312,12 @@ static long keyvalue_set(struct keyvalue_set __user *ukv)
 				#ifdef DEBUG_MODE_1
 					printk(KERN_INFO "KEYVALUE device: Write: First Node Overwritten at map[%llu], size: %llu, key: %llu, data: %s: \n",key_to_be_set, val->kventry->size, val->kventry->key,(char*) val->kventry->data);
 				#endif
+				#ifdef IMPLEMENTED_RWLOCK
+				read_write_Lock_release_writelock(lock);
+				#endif
+				#ifdef LINUX_RWLOCK
+					write_unlock(&mr_rwlock);
+				#endif
 				return transaction_id++;
 			}
 			else
@@ -275,7 +326,12 @@ static long keyvalue_set(struct keyvalue_set __user *ukv)
 				if(head == NULL)
 				{
 					printk(KERN_ERR "Memory allocation to node in dictionary failed!\n");
+					#ifdef IMPLEMENTED_RWLOCK
 					read_write_Lock_release_writelock(lock);
+					#endif
+					#ifdef LINUX_RWLOCK
+						write_unlock(&mr_rwlock);
+					#endif
 					return -1;
 					//exit(0);
 				}
@@ -292,24 +348,36 @@ static long keyvalue_set(struct keyvalue_set __user *ukv)
 					//printk(KERN_INFO "KEYVALUE device: Write: New Node inserted at map[%llu]: \n",key_to_be_set);
 					printk(KERN_INFO "KEYVALUE device: Write: Second Node inserted at tail at map[%llu], size: %llu, key: %llu, data: %s: \n",key_to_be_set, head->kventry->size, head->kventry->key, (char*)head->kventry->data);
 				#endif
+					#ifdef IMPLEMENTED_RWLOCK
+					read_write_Lock_release_writelock(lock);
+					#endif
+					#ifdef LINUX_RWLOCK
+						write_unlock(&mr_rwlock);
+					#endif
 				return transaction_id++;
 			}
 		}
 		else
 		{
-			while(val->next != NULL)
+			//while(val->next != NULL)
+			while(val != NULL)
 			{	
 				if(val->kventry->key == ukv->key)
 				{
 					val->kventry->size	= ukv->size;
 					memcpy(val->kventry->data, ukv->data, ukv->size);
 					//strcpy(val->kventry->data,ukv->data);
-					read_write_Lock_release_writelock(lock);
-					//return 1;
 					#ifdef DEBUG_MODE_1
 						//printk(KERN_INFO "KEYVALUE device: Write: Node overwritten at map[%llu]: \n",key_to_be_set);
 						printk(KERN_INFO "KEYVALUE device: Write: Node overwritten at map[%llu], size: %llu, key: %llu, data: %s: \n",key_to_be_set, val->kventry->size, val->kventry->key, (char *)val->kventry->data);
 					#endif
+					#ifdef IMPLEMENTED_RWLOCK
+					read_write_Lock_release_writelock(lock);
+					#endif
+					#ifdef LINUX_RWLOCK
+						write_unlock(&mr_rwlock);
+					#endif
+					//return 1;
 					return transaction_id++;
 				}								
 				val = val->next;	
@@ -319,7 +387,12 @@ static long keyvalue_set(struct keyvalue_set __user *ukv)
 			if(head == NULL)
 			{
 				printk(KERN_ERR "Memory allocation to node in dictionary failed!\n");
-				read_write_Lock_release_writelock(lock);
+					#ifdef IMPLEMENTED_RWLOCK
+					read_write_Lock_release_writelock(lock);
+					#endif
+					#ifdef LINUX_RWLOCK
+						write_unlock(&mr_rwlock);
+					#endif
 				return -1;
 				//exit(0);
 			}
@@ -336,13 +409,30 @@ static long keyvalue_set(struct keyvalue_set __user *ukv)
 			#ifdef DEBUG_MODE_1
 				printk(KERN_INFO "KEYVALUE device: Write: New Node inserted at tail at map[%llu], size: %llu, key: %llu, data: %s: \n",key_to_be_set, head->kventry->size, head->kventry->key, (char*)head->kventry->data);
 			#endif
+				#ifdef IMPLEMENTED_RWLOCK
+				read_write_Lock_release_writelock(lock);
+				#endif
+				#ifdef LINUX_RWLOCK
+					write_unlock(&mr_rwlock);
+				#endif
 			return transaction_id++;
 		}
+		#ifdef IMPLEMENTED_RWLOCK
 		read_write_Lock_release_writelock(lock);
+		#endif
+		#ifdef LINUX_RWLOCK
+			write_unlock(&mr_rwlock);
+		#endif
 		//return 1;
 		return transaction_id++;
 	}
 
+	#ifdef IMPLEMENTED_RWLOCK
+	read_write_Lock_release_writelock(lock);
+	#endif
+	#ifdef LINUX_RWLOCK
+		write_unlock(&mr_rwlock);
+	#endif
 	return -1;
     //return transaction_id++;
 }
@@ -357,14 +447,24 @@ static long keyvalue_delete(struct keyvalue_delete __user *ukv)
 	key_to_be_deleted	= hash(ukv->key);
 	curr			= map->hashmap[key_to_be_deleted];
 
-	read_write_Lock_acquire_writelock(lock);
+		#ifdef IMPLEMENTED_RWLOCK
+		read_write_Lock_acquire_writelock(lock);
+		#endif
+		#ifdef LINUX_RWLOCK
+			write_lock(&mr_rwlock);
+		#endif
 
 	if(curr == NULL)
 	{
 		#ifdef DEBUG_MODE_1
 			printk(KERN_INFO "Map is empty. Cannot perform delete operation!\n");
 		#endif
+		#ifdef IMPLEMENTED_RWLOCK
 		read_write_Lock_release_writelock(lock);
+		#endif
+		#ifdef LINUX_RWLOCK
+			write_unlock(&mr_rwlock);
+		#endif
 		return -1;
 	}
 	else if(curr->kventry->key	== ukv->key)
@@ -373,7 +473,12 @@ static long keyvalue_delete(struct keyvalue_delete __user *ukv)
 		kfree(curr->kventry->data);
 		kfree(curr->kventry);
 		kfree(curr);
+		#ifdef IMPLEMENTED_RWLOCK
 		read_write_Lock_release_writelock(lock);
+		#endif
+		#ifdef LINUX_RWLOCK
+			write_unlock(&mr_rwlock);
+		#endif
     		return transaction_id++;
 	}
 	else
@@ -387,7 +492,12 @@ static long keyvalue_delete(struct keyvalue_delete __user *ukv)
 				kfree(curr->kventry->data);
 				kfree(curr->kventry);
 				kfree(curr);
+				#ifdef IMPLEMENTED_RWLOCK
 				read_write_Lock_release_writelock(lock);
+				#endif
+				#ifdef LINUX_RWLOCK
+					write_unlock(&mr_rwlock);
+				#endif
     				return transaction_id++;
 			}
 			prev	= curr;
@@ -397,10 +507,21 @@ static long keyvalue_delete(struct keyvalue_delete __user *ukv)
 		#ifdef DEBUG_MODE_1
 			printk(KERN_INFO "The requested key is non-existant in the map!\n");
 		#endif
+		#ifdef IMPLEMENTED_RWLOCK
 		read_write_Lock_release_writelock(lock);
+		#endif
+		#ifdef LINUX_RWLOCK
+			write_unlock(&mr_rwlock);
+		#endif
 		return -1;
 	}
 
+	#ifdef IMPLEMENTED_RWLOCK
+	read_write_Lock_release_writelock(lock);
+	#endif
+	#ifdef LINUX_RWLOCK
+		write_unlock(&mr_rwlock);
+	#endif
 	return -1;
    // return transaction_id++;
 }
@@ -454,12 +575,17 @@ static int __init keyvalue_init(void)
 	// added by ishan
 	__u64 i;
 
+	#ifdef LINUX_RWLOCK
+		rwlock_init(&mr_rwlock);
+	#endif
+	#ifdef IMPLEMENTED_RWLOCK
 	lock	= (read_write_Lock_t*) kmalloc(sizeof(read_write_Lock_t), GFP_KERNEL);
 	if(lock == NULL)
 	{
 		printk(KERN_ERR "KEYVALUE device: Memory allocation to lock variable failed!");
 	}
 	read_write_Lock_init(lock);
+	#endif
 	#ifdef DEBUG_MODE_1
 		printk(KERN_INFO "KEYVALUE device: just initialized semaphores!\n");
 	#endif
