@@ -211,7 +211,7 @@ static long keyvalue_get(struct keyvalue_get __user *ukv)
         				printk(KERN_INFO "Read:\tkey: %llu\tsize: %llu\tdata: %s data_addr: %u\n",curr->kventry->key, curr->kventry->size, (char *)curr->kventry->data, &curr->kventry->data);
 				#endif
 				
-				memcpy(kv.data, curr->kventry->data, curr->kventry->size);
+				copy_to_user(kv.data, curr->kventry->data, curr->kventry->size);
 				*(kv.size)	= curr->kventry->size;
 				
 				// WARNING: The user might not have allocated memory to kv.data
@@ -289,7 +289,7 @@ struct dictnode* create_node(struct keyvalue_set* kv)
 		return NULL;
 	}
 	head->kventry->size	= kv->size;
-	memcpy(head->kventry->data, kv->data, kv->size);
+	copy_from_user(head->kventry->data, kv->data, kv->size);
 
 	return head;
 }
@@ -348,7 +348,7 @@ static long keyvalue_set(struct keyvalue_set __user *ukv)
 			{		
 				void* temp_data	= val->kventry->data;
 				val->kventry->data = (void*) kmalloc(kv.size, GFP_KERNEL);
-				memcpy(val->kventry->data, kv.data, kv.size);
+				copy_from_user(val->kventry->data, kv.data, kv.size);
 				kfree(temp_data);
 				val->kventry->size	= kv.size;
 
@@ -391,7 +391,7 @@ static long keyvalue_set(struct keyvalue_set __user *ukv)
 				{
 					void* temp_data	= val->kventry->data;
 					val->kventry->data = (void*) kmalloc(kv.size, GFP_KERNEL);
-					memcpy(val->kventry->data, kv.data, kv.size);
+					copy_from_user(val->kventry->data, kv.data, kv.size);
 					kfree(temp_data);
 					val->kventry->size	= kv.size;
 					
