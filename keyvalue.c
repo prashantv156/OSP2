@@ -317,6 +317,10 @@ static long keyvalue_set(struct keyvalue_set __user *ukv)
 		write_lock(&mr_rwlock);
 	#endif
 
+	if(kv.size > 4096)
+	{
+		return -1;
+	}
 	
 	if(val == NULL)
 	{
