@@ -44,7 +44,7 @@
 
 // added by ishan
 #include <linux/spinlock.h>
-#define DEBUG_MODE_1
+//#define DEBUG_MODE_1
 #define MAX_NUMBER_OF_KEY_VALUE_PAIRS 256
 //#define IMPLEMENTED_RWLOCK
 #define LINUX_RWLOCK
@@ -319,6 +319,12 @@ static long keyvalue_set(struct keyvalue_set __user *ukv)
 
 	if(kv.size > 4096)
 	{
+				#ifdef IMPLEMENTED_RWLOCK
+				read_write_Lock_release_writelock(lock);
+				#endif
+				#ifdef LINUX_RWLOCK
+					write_unlock(&mr_rwlock);
+				#endif
 		return -1;
 	}
 	
