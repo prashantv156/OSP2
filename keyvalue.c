@@ -45,7 +45,7 @@
 // added by ishan
 #include <linux/spinlock.h>
 #define DEBUG_MODE_1
-#define MAX_NUMBER_OF_KEY_VALUE_PAIRS 8
+#define MAX_NUMBER_OF_KEY_VALUE_PAIRS 256
 //#define IMPLEMENTED_RWLOCK
 #define LINUX_RWLOCK
 
@@ -208,7 +208,7 @@ static long keyvalue_get(struct keyvalue_get __user *ukv)
 			if(curr->kventry->key	== kv.key)
 			{
 				#ifdef DEBUG_MODE_1
-        				printk(KERN_INFO "Read:\tkey: %llu\tsize: %llu\tdata: %s\n",curr->kventry->key, curr->kventry->size, (char *)curr->kventry->data);
+        				printk(KERN_INFO "Read:\tkey: %llu\tsize: %llu\tdata: %s data_addr: %u\n",curr->kventry->key, curr->kventry->size, (char *)curr->kventry->data, &curr->kventry->data);
 				#endif
 				
 				memcpy(kv.data, curr->kventry->data, curr->kventry->size);
@@ -244,6 +244,56 @@ static long keyvalue_get(struct keyvalue_get __user *ukv)
     //return transaction_id++;
 }
 
+static 
+struct dictnode* create_node(struct keyvalue_set* kv)
+{
+	// create a node
+	struct dictnode* head ;
+	head	= (struct dictnode*) kmalloc(sizeof(struct dictnode), GFP_KERNEL);
+	if(head == NULL)
+	{
+		printk(KERN_ERR "Memory allocation to node in dictionary failed!\n");
+		#ifdef IMPLEMENTED_RWLOCK
+		read_write_Lock_release_writelock(lock);
+		#endif
+		#ifdef LINUX_RWLOCK
+			write_unlock(&mr_rwlock);
+		#endif
+		return NULL;
+	}
+	head->next	= NULL;
+	head->kventry	= (struct keyvalue_base*) kmalloc(sizeof(struct keyvalue_base), GFP_KERNEL);
+	if(head->kventry == NULL)
+	{
+		printk(KERN_ERR "Memory allocation to kventry in dictionary failed!\n");
+		#ifdef IMPLEMENTED_RWLOCK
+		read_write_Lock_release_writelock(lock);
+		#endif
+		#ifdef LINUX_RWLOCK
+			write_unlock(&mr_rwlock);
+		#endif
+		return NULL;
+	}
+	head->kventry->size	= kv->size;
+	head->kventry->key	= kv->key;
+	head->kventry->data	= (void *) kmalloc((head->kventry->size ), GFP_KERNEL);
+	if(head->kventry->data == NULL)
+	{
+		printk(KERN_ERR "Memory allocation to data in dictionary failed!\n");
+		#ifdef IMPLEMENTED_RWLOCK
+		read_write_Lock_release_writelock(lock);
+		#endif
+		#ifdef LINUX_RWLOCK
+			write_unlock(&mr_rwlock);
+		#endif
+		return NULL;
+	}
+	head->kventry->size	= kv->size;
+	memcpy(head->kventry->data, kv->data, kv->size);
+
+	return head;
+}
+
 static long keyvalue_set(struct keyvalue_set __user *ukv)
 {
     struct keyvalue_set kv;
@@ -266,31 +316,12 @@ static long keyvalue_set(struct keyvalue_set __user *ukv)
 	#ifdef LINUX_RWLOCK
 		write_lock(&mr_rwlock);
 	#endif
+
 	
 	if(val == NULL)
 	{
-	
-		head		= (struct dictnode*)kmalloc(sizeof(struct dictnode), GFP_KERNEL);
-		if(head == NULL)
-		{
-			printk(KERN_ERR "Memory allocation to node in dictionary failed!\n");
-			#ifdef IMPLEMENTED_RWLOCK
-			read_write_Lock_release_writelock(lock);
-			#endif
-			#ifdef LINUX_RWLOCK
-				write_unlock(&mr_rwlock);
-			#endif
-			return -1;
-			//exit(0);
-		}
-		head->kventry 	= (struct keyvalue_base* ) kmalloc(sizeof(struct keyvalue_base), GFP_KERNEL);
-		//head->size = kv.size;
-		head->kventry->size 	= kv.size;
-		head->kventry->data	= (void *) kmalloc((head->kventry->size ), GFP_KERNEL);
-		head->kventry->key	= kv.key;
-		memcpy(head->kventry->data, kv.data, kv.size);
-		head->next = NULL;			
-
+		head	= create_node(&kv);	
+		if(head == NULL) return -1;
 		map->hashmap[key_to_be_set] = head;
 		#ifdef DEBUG_MODE_1
 			printk(KERN_INFO "KEYVALUE device: Write: First Node added at map[%llu], size: %llu, key: %llu, data: %s: \n",key_to_be_set, head->kventry->size, head->kventry->key,(char*) head->kventry->data);
@@ -310,11 +341,13 @@ static long keyvalue_set(struct keyvalue_set __user *ukv)
 		if(val->next == NULL)
 		{	
 			if(val->kventry->key == kv.key)
-			{	
-				//strcpy(val->kventry->data, (ukv)->data);
-				//memset(val->kventry->data,0,val->kventry->size);
-				val->kventry->size	= kv.size;
+			{		
+				void* temp_data	= val->kventry->data;
+				val->kventry->data = (void*) kmalloc(kv.size, GFP_KERNEL);
 				memcpy(val->kventry->data, kv.data, kv.size);
+				kfree(temp_data);
+				val->kventry->size	= kv.size;
+
 				#ifdef DEBUG_MODE_1
 					printk(KERN_INFO "KEYVALUE device: Write: First Node Overwritten at map[%llu], size: %llu, key: %llu, data: %s: \n",key_to_be_set, val->kventry->size, val->kventry->key,(char*) val->kventry->data);
 				#endif
@@ -328,27 +361,8 @@ static long keyvalue_set(struct keyvalue_set __user *ukv)
 			}
 			else
 			{	
-				head 		= (struct dictnode*)kmalloc(sizeof(struct dictnode), GFP_KERNEL);
-				if(head == NULL)
-				{
-					printk(KERN_ERR "Memory allocation to node in dictionary failed!\n");
-					#ifdef IMPLEMENTED_RWLOCK
-					read_write_Lock_release_writelock(lock);
-					#endif
-					#ifdef LINUX_RWLOCK
-						write_unlock(&mr_rwlock);
-					#endif
-					return -1;
-					//exit(0);
-				}
-				head->kventry 	= (struct keyvalue_base* ) kmalloc(sizeof(struct keyvalue_base), GFP_KERNEL);
-				//head->size = kv.size;
-				head->kventry->size 	= kv.size;
-				head->kventry->data	= (void *) kmalloc((head->kventry->size ) , GFP_KERNEL);
-				head->kventry->key	= kv.key;
-				memcpy(head->kventry->data, kv.data, kv.size);
-				
-				head->next = NULL;
+				head	= create_node(&kv);	
+				if(head == NULL) return -1;
 				val->next = head;
 				#ifdef DEBUG_MODE_1
 					//printk(KERN_INFO "KEYVALUE device: Write: New Node inserted at map[%llu]: \n",key_to_be_set);
@@ -371,13 +385,15 @@ static long keyvalue_set(struct keyvalue_set __user *ukv)
 			{	
 				if(val->kventry->key == kv.key)
 				{
-					//memset(val->kventry->data,0,val->kventry->size);
-					val->kventry->size	= kv.size;
+					void* temp_data	= val->kventry->data;
+					val->kventry->data = (void*) kmalloc(kv.size, GFP_KERNEL);
 					memcpy(val->kventry->data, kv.data, kv.size);
-					//strcpy(val->kventry->data,kv.data);
+					kfree(temp_data);
+					val->kventry->size	= kv.size;
+					
 					#ifdef DEBUG_MODE_1
 						//printk(KERN_INFO "KEYVALUE device: Write: Node overwritten at map[%llu]: \n",key_to_be_set);
-						printk(KERN_INFO "KEYVALUE device: Write: Node overwritten at map[%llu], size: %llu, key: %llu, data: %s: \n",key_to_be_set, val->kventry->size, val->kventry->key, (char *)val->kventry->data);
+						printk(KERN_INFO "KEYVALUE device: Write: Node overwritten at map[%llu], size: %llu, key: %llu, data: %s, data_addr: %u: \n",key_to_be_set, val->kventry->size, val->kventry->key, (char *)val->kventry->data, &val->kventry->data);
 					#endif
 					#ifdef IMPLEMENTED_RWLOCK
 					read_write_Lock_release_writelock(lock);
@@ -392,39 +408,19 @@ static long keyvalue_set(struct keyvalue_set __user *ukv)
 				val = val->next;	
 			}
 
-			head		= (struct dictnode*)kmalloc(sizeof(struct dictnode), GFP_KERNEL);
-			if(head == NULL)
-			{
-				printk(KERN_ERR "Memory allocation to node in dictionary failed!\n");
-					#ifdef IMPLEMENTED_RWLOCK
-					read_write_Lock_release_writelock(lock);
-					#endif
-					#ifdef LINUX_RWLOCK
-						write_unlock(&mr_rwlock);
-					#endif
-				return -1;
-				//exit(0);
-			}
-			head->kventry 	= (struct keyvalue_base* ) kmalloc(sizeof(struct keyvalue_base), GFP_KERNEL);
-			//head->size = kv.size;
-			head->kventry->size 	= kv.size;
-			head->kventry->data	= (void *) kmalloc((head->kventry->size ) , GFP_KERNEL);
-			head->kventry->key	= kv.key;
-			memcpy(head->kventry->data, kv.data, kv.size);
-			
-			head->next = NULL;
-		
 			//val->next = head;
+			head	= create_node(&kv);	
+			if(head == NULL) return -1;
 			prev->next = head;
 			#ifdef DEBUG_MODE_1
 				printk(KERN_INFO "KEYVALUE device: Write: New Node inserted at tail at map[%llu], size: %llu, key: %llu, data: %s: \n",key_to_be_set, head->kventry->size, head->kventry->key, (char*)head->kventry->data);
 			#endif
-				#ifdef IMPLEMENTED_RWLOCK
-				read_write_Lock_release_writelock(lock);
-				#endif
-				#ifdef LINUX_RWLOCK
-					write_unlock(&mr_rwlock);
-				#endif
+			#ifdef IMPLEMENTED_RWLOCK
+			read_write_Lock_release_writelock(lock);
+			#endif
+			#ifdef LINUX_RWLOCK
+				write_unlock(&mr_rwlock);
+			#endif
 			return transaction_id++;
 		}
 		#ifdef IMPLEMENTED_RWLOCK
