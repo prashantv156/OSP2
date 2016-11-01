@@ -144,7 +144,7 @@ struct keyvalue_base
 	//char data[1024];
 	void *data;
 	// replace with char* data
-	// dont forget to allocate memory to data and copy ukv->kventry->data into it
+	// dont forget to allocate memory to data and copy kv.kventry->data into it
 };
 
 struct dictnode 
@@ -171,12 +171,14 @@ static void free_callback(void *data)
 
 static long keyvalue_get(struct keyvalue_get __user *ukv)
 {
-    //struct keyvalue_get kv;
-
+    struct keyvalue_get kv;
 	__u64 key_to_be_fetched;
 	struct dictnode* curr;
 	
-	key_to_be_fetched	= hash(ukv->key);
+	kv.key	= ukv->key;
+	kv.size	= ukv->size;
+	kv.data	= ukv->data;
+	key_to_be_fetched	= hash(kv.key);
 	curr			= map->hashmap[key_to_be_fetched];
 
 	#ifdef IMPLEMENTED_RWLOCK
@@ -189,7 +191,7 @@ static long keyvalue_get(struct keyvalue_get __user *ukv)
 	if(curr == NULL)
 	{
 		#ifdef DEBUG_MODE_1
-			printk(KERN_INFO "Requested key %llu is yet to be inserted in the map\n", ukv->key);
+			printk(KERN_INFO "Requested key %llu is yet to be inserted in the map\n", kv.key);
 		#endif
 		#ifdef IMPLEMENTED_RWLOCK
 		read_write_Lock_release_readlock(lock);
@@ -203,16 +205,16 @@ static long keyvalue_get(struct keyvalue_get __user *ukv)
 	{
 		while(curr != NULL)
 		{
-			if(curr->kventry->key	== ukv->key)
+			if(curr->kventry->key	== kv.key)
 			{
 				#ifdef DEBUG_MODE_1
         				printk(KERN_INFO "Read:\tkey: %llu\tsize: %llu\tdata: %s\n",curr->kventry->key, curr->kventry->size, (char *)curr->kventry->data);
 				#endif
 				
-				memcpy(ukv->data, curr->kventry->data, curr->kventry->size);
-				ukv->size	= curr->kventry->size;
+				memcpy(kv.data, curr->kventry->data, curr->kventry->size);
+				*(kv.size)	= curr->kventry->size;
 				
-				// WARNING: The user might not have allocated memory to ukv->data
+				// WARNING: The user might not have allocated memory to kv.data
 				// Possible bug ishan
 
 				#ifdef IMPLEMENTED_RWLOCK
@@ -228,7 +230,7 @@ static long keyvalue_get(struct keyvalue_get __user *ukv)
 		}
 		
 		#ifdef DEBUG_MODE_1
-			printk(KERN_INFO "Requested key %llu is yet to be inserted in the map\n", ukv->key);
+			printk(KERN_INFO "Requested key %llu is yet to be inserted in the map\n", kv.key);
 		#endif
 		#ifdef IMPLEMENTED_RWLOCK
 		read_write_Lock_release_readlock(lock);
@@ -244,17 +246,19 @@ static long keyvalue_get(struct keyvalue_get __user *ukv)
 
 static long keyvalue_set(struct keyvalue_set __user *ukv)
 {
-    //struct keyvalue_set kv;
-
+    struct keyvalue_set kv;
 	__u64 key_to_be_set;
 	struct dictnode* val;
 	struct dictnode* prev;
 	struct dictnode* head ;
 
+	kv.key	= ukv->key;
+	kv.size	= ukv->size;
+	kv.data	= ukv->data;
 	head	= NULL;
 	val	= NULL;
 
-	key_to_be_set		= hash(ukv->key);
+	key_to_be_set		= hash(kv.key);
 	val		 	= map->hashmap[key_to_be_set];
 	#ifdef IMPLEMENTED_RWLOCK
 	read_write_Lock_acquire_writelock(lock);
@@ -280,11 +284,11 @@ static long keyvalue_set(struct keyvalue_set __user *ukv)
 			//exit(0);
 		}
 		head->kventry 	= (struct keyvalue_base* ) kmalloc(sizeof(struct keyvalue_base), GFP_KERNEL);
-		//head->size = ukv->size;
-		head->kventry->size 	= ukv->size;
-		head->kventry->data	= (void *) kmalloc((head->kventry->size ) * (sizeof(void)), GFP_KERNEL);
-		head->kventry->key	= ukv->key;
-		memcpy(head->kventry->data, ukv->data, ukv->size);
+		//head->size = kv.size;
+		head->kventry->size 	= kv.size;
+		head->kventry->data	= (void *) kmalloc((head->kventry->size ), GFP_KERNEL);
+		head->kventry->key	= kv.key;
+		memcpy(head->kventry->data, kv.data, kv.size);
 		head->next = NULL;			
 
 		map->hashmap[key_to_be_set] = head;
@@ -305,12 +309,12 @@ static long keyvalue_set(struct keyvalue_set __user *ukv)
 	{	
 		if(val->next == NULL)
 		{	
-			if(val->kventry->key == ukv->key)
+			if(val->kventry->key == kv.key)
 			{	
 				//strcpy(val->kventry->data, (ukv)->data);
 				//memset(val->kventry->data,0,val->kventry->size);
-				val->kventry->size	= ukv->size;
-				memcpy(val->kventry->data, ukv->data, ukv->size);
+				val->kventry->size	= kv.size;
+				memcpy(val->kventry->data, kv.data, kv.size);
 				#ifdef DEBUG_MODE_1
 					printk(KERN_INFO "KEYVALUE device: Write: First Node Overwritten at map[%llu], size: %llu, key: %llu, data: %s: \n",key_to_be_set, val->kventry->size, val->kventry->key,(char*) val->kventry->data);
 				#endif
@@ -338,11 +342,11 @@ static long keyvalue_set(struct keyvalue_set __user *ukv)
 					//exit(0);
 				}
 				head->kventry 	= (struct keyvalue_base* ) kmalloc(sizeof(struct keyvalue_base), GFP_KERNEL);
-				//head->size = ukv->size;
-				head->kventry->size 	= ukv->size;
-				head->kventry->data	= (void *) kmalloc((head->kventry->size ) * (sizeof(void)), GFP_KERNEL);
-				head->kventry->key	= ukv->key;
-				memcpy(head->kventry->data, ukv->data, ukv->size);
+				//head->size = kv.size;
+				head->kventry->size 	= kv.size;
+				head->kventry->data	= (void *) kmalloc((head->kventry->size ) , GFP_KERNEL);
+				head->kventry->key	= kv.key;
+				memcpy(head->kventry->data, kv.data, kv.size);
 				
 				head->next = NULL;
 				val->next = head;
@@ -365,12 +369,12 @@ static long keyvalue_set(struct keyvalue_set __user *ukv)
 			prev	= val;
 			while(val != NULL)
 			{	
-				if(val->kventry->key == ukv->key)
+				if(val->kventry->key == kv.key)
 				{
 					//memset(val->kventry->data,0,val->kventry->size);
-					val->kventry->size	= ukv->size;
-					memcpy(val->kventry->data, ukv->data, ukv->size);
-					//strcpy(val->kventry->data,ukv->data);
+					val->kventry->size	= kv.size;
+					memcpy(val->kventry->data, kv.data, kv.size);
+					//strcpy(val->kventry->data,kv.data);
 					#ifdef DEBUG_MODE_1
 						//printk(KERN_INFO "KEYVALUE device: Write: Node overwritten at map[%llu]: \n",key_to_be_set);
 						printk(KERN_INFO "KEYVALUE device: Write: Node overwritten at map[%llu], size: %llu, key: %llu, data: %s: \n",key_to_be_set, val->kventry->size, val->kventry->key, (char *)val->kventry->data);
@@ -402,11 +406,11 @@ static long keyvalue_set(struct keyvalue_set __user *ukv)
 				//exit(0);
 			}
 			head->kventry 	= (struct keyvalue_base* ) kmalloc(sizeof(struct keyvalue_base), GFP_KERNEL);
-			//head->size = ukv->size;
-			head->kventry->size 	= ukv->size;
-			head->kventry->data	= (void *) kmalloc((head->kventry->size ) * (sizeof(void)), GFP_KERNEL);
-			head->kventry->key	= ukv->key;
-			memcpy(head->kventry->data, ukv->data, ukv->size);
+			//head->size = kv.size;
+			head->kventry->size 	= kv.size;
+			head->kventry->data	= (void *) kmalloc((head->kventry->size ) , GFP_KERNEL);
+			head->kventry->key	= kv.key;
+			memcpy(head->kventry->data, kv.data, kv.size);
 			
 			head->next = NULL;
 		
@@ -445,12 +449,12 @@ static long keyvalue_set(struct keyvalue_set __user *ukv)
 
 static long keyvalue_delete(struct keyvalue_delete __user *ukv)
 {
-    //struct keyvalue_delete kv;
-
+    struct keyvalue_delete kv;
 	__u64 key_to_be_deleted;
 	struct dictnode* curr ;	
 
-	key_to_be_deleted	= hash(ukv->key);
+	kv.key	= ukv->key;
+	key_to_be_deleted	= hash(kv.key);
 	curr			= map->hashmap[key_to_be_deleted];
 
 		#ifdef IMPLEMENTED_RWLOCK
@@ -473,7 +477,7 @@ static long keyvalue_delete(struct keyvalue_delete __user *ukv)
 		#endif
 		return -1;
 	}
-	else if(curr->kventry->key	== ukv->key)
+	else if(curr->kventry->key	== kv.key)
 	{
 		map->hashmap[key_to_be_deleted]	= curr->next;
 		kfree(curr->kventry->data);
@@ -492,7 +496,7 @@ static long keyvalue_delete(struct keyvalue_delete __user *ukv)
 		struct dictnode* prev	= curr;
 		while(curr != NULL)
 		{
-			if(curr->kventry->key	== ukv->key)
+			if(curr->kventry->key	== kv.key)
 			{
 				prev->next	= curr->next;
 				kfree(curr->kventry->data);
