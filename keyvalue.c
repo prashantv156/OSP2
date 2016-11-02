@@ -131,10 +131,6 @@ rwlock_t mr_rwlock;	// dynamic
 static __u64 hash(__u64 key)
 {
 	return (key%MAX_NUMBER_OF_KEY_VALUE_PAIRS);
-//	__u64 temp;
-//	temp = key;
-//	temp >>= 3;
-//	return (key ^ (temp>>10) ^ (temp>>20)) & MAX_NUMBER_OF_KEY_VALUE_PAIRS;
 }
 
 struct keyvalue_base
@@ -143,8 +139,6 @@ struct keyvalue_base
 	__u64 size;
 	//char data[1024];
 	void *data;
-	// replace with char* data
-	// dont forget to allocate memory to data and copy kv.kventry->data into it
 };
 
 struct dictnode 
@@ -284,6 +278,7 @@ struct dictnode* create_node(struct keyvalue_set* kv)
 	}
 	head->kventry->size	= kv->size;
 	bytes_not_copied = copy_from_user(head->kventry->data, kv->data, kv->size);
+	
 	if(bytes_not_copied != 0)
 	{
 		printk(KERN_ERR "Could not copy all data from user space");
@@ -293,6 +288,7 @@ struct dictnode* create_node(struct keyvalue_set* kv)
 		return NULL;
 
 	}
+
 	return head;
 }
 
@@ -322,12 +318,12 @@ static long keyvalue_set(struct keyvalue_set __user *ukv)
 
 	if(kv.size > 4096 || kv.size < 1)
 	{
-				#ifdef IMPLEMENTED_RWLOCK
-				read_write_Lock_release_writelock(lock);
-				#endif
-				#ifdef LINUX_RWLOCK
-					write_unlock(&mr_rwlock);
-				#endif
+		#ifdef IMPLEMENTED_RWLOCK
+		read_write_Lock_release_writelock(lock);
+		#endif
+		#ifdef LINUX_RWLOCK
+			write_unlock(&mr_rwlock);
+		#endif
 		return -1;
 	}
 	
@@ -414,7 +410,6 @@ static long keyvalue_set(struct keyvalue_set __user *ukv)
 				val->next = head;
 
 				#ifdef DEBUG_MODE_1
-					//printk(KERN_INFO "KEYVALUE device: Write: New Node inserted at map[%llu]: \n",key_to_be_set);
 					printk(KERN_INFO "KEYVALUE device: Write: Second Node inserted at tail at map[%llu], size: %llu, key: %llu, data: %s: \n",key_to_be_set, head->kventry->size, head->kventry->key, (char*)head->kventry->data);
 				#endif
 					#ifdef IMPLEMENTED_RWLOCK
@@ -428,7 +423,6 @@ static long keyvalue_set(struct keyvalue_set __user *ukv)
 		}
 		else
 		{
-			//while(val->next != NULL)
 			prev	= val;
 			while(val != NULL)
 			{	
@@ -492,7 +486,9 @@ static long keyvalue_set(struct keyvalue_set __user *ukv)
 				write_unlock(&mr_rwlock);
 			#endif
 			return transaction_id++;
+
 		}
+
 		#ifdef IMPLEMENTED_RWLOCK
 		read_write_Lock_release_writelock(lock);
 		#endif
@@ -501,6 +497,7 @@ static long keyvalue_set(struct keyvalue_set __user *ukv)
 		#endif
 		//return 1;
 		return transaction_id++;
+
 	}
 
 	#ifdef IMPLEMENTED_RWLOCK
@@ -523,12 +520,12 @@ static long keyvalue_delete(struct keyvalue_delete __user *ukv)
 	key_to_be_deleted	= hash(kv.key);
 	curr			= map->hashmap[key_to_be_deleted];
 
-		#ifdef IMPLEMENTED_RWLOCK
-		read_write_Lock_acquire_writelock(lock);
-		#endif
-		#ifdef LINUX_RWLOCK
-			write_lock(&mr_rwlock);
-		#endif
+	#ifdef IMPLEMENTED_RWLOCK
+	read_write_Lock_acquire_writelock(lock);
+	#endif
+	#ifdef LINUX_RWLOCK
+		write_lock(&mr_rwlock);
+	#endif
 
 	if(curr == NULL)
 	{
@@ -543,6 +540,7 @@ static long keyvalue_delete(struct keyvalue_delete __user *ukv)
 		#endif
 		return -1;
 	}
+
 	else if(curr->kventry->key	== kv.key)
 	{
 		map->hashmap[key_to_be_deleted]	= curr->next;
@@ -557,6 +555,7 @@ static long keyvalue_delete(struct keyvalue_delete __user *ukv)
 		#endif
     		return transaction_id++;
 	}
+
 	else
 	{
 		struct dictnode* prev	= curr;
@@ -584,7 +583,7 @@ static long keyvalue_delete(struct keyvalue_delete __user *ukv)
 			printk(KERN_INFO "The requested key is non-existant in the map!\n");
 		#endif
 		#ifdef IMPLEMENTED_RWLOCK
-		read_write_Lock_release_writelock(lock);
+			read_write_Lock_release_writelock(lock);
 		#endif
 		#ifdef LINUX_RWLOCK
 			write_unlock(&mr_rwlock);
@@ -599,7 +598,7 @@ static long keyvalue_delete(struct keyvalue_delete __user *ukv)
 		write_unlock(&mr_rwlock);
 	#endif
 	return -1;
-   // return transaction_id++;
+   
 }
 
 //Added by Hung-Wei
@@ -659,6 +658,7 @@ static int __init keyvalue_init(void)
 	if(lock == NULL)
 	{
 		printk(KERN_ERR "KEYVALUE device: Memory allocation to lock variable failed!");
+		return -1;
 	}
 	read_write_Lock_init(lock);
 	#endif
@@ -670,17 +670,18 @@ static int __init keyvalue_init(void)
 	if(map == NULL)
 	{
 		printk(KERN_ERR "Memory allocation to map failed!\n");
-		//exit(0);
+		return -1;
 	}
+
 	#ifdef DEBUG_MODE_1
 		printk(KERN_INFO "KEYVALUE device: allocated memory to map!\n");
 	#endif
+
 	for(i=0; i< MAX_NUMBER_OF_KEY_VALUE_PAIRS; i++)
 	{
 		map->hashmap[i]	= NULL;
 	}
 	// initialization of map ends here
-
 
     if ((ret = misc_register(&keyvalue_dev)))
         printk(KERN_ERR "Unable to register \"keyvalue\" misc device\n");
