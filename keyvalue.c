@@ -171,8 +171,10 @@ static void free_callback(void *data)
 
 static long keyvalue_get(struct keyvalue_get __user *ukv)
 {
-    struct keyvalue_get kv;
+	struct keyvalue_get kv;
 	__u64 key_to_be_fetched;
+	__u64 bytes_not_copied;
+
 	struct dictnode* curr;
 	
 	kv.key	= ukv->key;
@@ -211,7 +213,16 @@ static long keyvalue_get(struct keyvalue_get __user *ukv)
         				printk(KERN_INFO "Read:\tkey: %llu\tsize: %llu\tdata: %s data_addr: %u\n",curr->kventry->key, curr->kventry->size, (char *)curr->kventry->data, &curr->kventry->data);
 				#endif
 				
-				copy_to_user(kv.data, curr->kventry->data, curr->kventry->size);
+				bytes_not_copied = copy_to_user(kv.data, curr->kventry->data, curr->kventry->size);
+				
+			/*	if(bytes_not_copied != 0)
+				{			
+					#ifdef LINUX_RWLOCK
+						write_unlock(&mr_rwlock);
+					#endif
+					return -1;
+				}*/
+			
 				*(kv.size)	= curr->kventry->size;
 				
 				// WARNING: The user might not have allocated memory to kv.data
@@ -248,17 +259,12 @@ static
 struct dictnode* create_node(struct keyvalue_set* kv)
 {
 	// create a node
+	__u64 bytes_not_copied;
 	struct dictnode* head ;
 	head	= (struct dictnode*) kmalloc(sizeof(struct dictnode), GFP_KERNEL);
 	if(head == NULL)
 	{
 		printk(KERN_ERR "Memory allocation to node in dictionary failed!\n");
-		#ifdef IMPLEMENTED_RWLOCK
-		read_write_Lock_release_writelock(lock);
-		#endif
-		#ifdef LINUX_RWLOCK
-			write_unlock(&mr_rwlock);
-		#endif
 		return NULL;
 	}
 	head->next	= NULL;
@@ -266,12 +272,6 @@ struct dictnode* create_node(struct keyvalue_set* kv)
 	if(head->kventry == NULL)
 	{
 		printk(KERN_ERR "Memory allocation to kventry in dictionary failed!\n");
-		#ifdef IMPLEMENTED_RWLOCK
-		read_write_Lock_release_writelock(lock);
-		#endif
-		#ifdef LINUX_RWLOCK
-			write_unlock(&mr_rwlock);
-		#endif
 		return NULL;
 	}
 	head->kventry->size	= kv->size;
@@ -280,17 +280,19 @@ struct dictnode* create_node(struct keyvalue_set* kv)
 	if(head->kventry->data == NULL)
 	{
 		printk(KERN_ERR "Memory allocation to data in dictionary failed!\n");
-		#ifdef IMPLEMENTED_RWLOCK
-		read_write_Lock_release_writelock(lock);
-		#endif
-		#ifdef LINUX_RWLOCK
-			write_unlock(&mr_rwlock);
-		#endif
 		return NULL;
 	}
 	head->kventry->size	= kv->size;
-	copy_from_user(head->kventry->data, kv->data, kv->size);
+	bytes_not_copied = copy_from_user(head->kventry->data, kv->data, kv->size);
+	if(bytes_not_copied != 0)
+	{
+		printk(KERN_ERR "Could not copy all data from user space");
+		kfree(head->kventry->data);
+		kfree(head->kventry);
+		kfree(head);			
+		return NULL;
 
+	}
 	return head;
 }
 
@@ -298,6 +300,7 @@ static long keyvalue_set(struct keyvalue_set __user *ukv)
 {
     struct keyvalue_set kv;
 	__u64 key_to_be_set;
+	__u64 bytes_not_copied;
 	struct dictnode* val;
 	struct dictnode* prev;
 	struct dictnode* head ;
@@ -317,7 +320,7 @@ static long keyvalue_set(struct keyvalue_set __user *ukv)
 		write_lock(&mr_rwlock);
 	#endif
 
-	if(kv.size > 4096)
+	if(kv.size > 4096 || kv.size < 1)
 	{
 				#ifdef IMPLEMENTED_RWLOCK
 				read_write_Lock_release_writelock(lock);
@@ -331,7 +334,19 @@ static long keyvalue_set(struct keyvalue_set __user *ukv)
 	if(val == NULL)
 	{
 		head	= create_node(&kv);	
-		if(head == NULL) return -1;
+		if(head == NULL)
+		{
+		
+		#ifdef IMPLEMENTED_RWLOCK
+		read_write_Lock_release_writelock(lock);
+		#endif
+		#ifdef LINUX_RWLOCK
+			write_unlock(&mr_rwlock);
+		#endif
+ 		return -1;
+		
+		}
+
 		map->hashmap[key_to_be_set] = head;
 		#ifdef DEBUG_MODE_1
 			printk(KERN_INFO "KEYVALUE device: Write: First Node added at map[%llu], size: %llu, key: %llu, data: %s: \n",key_to_be_set, head->kventry->size, head->kventry->key,(char*) head->kventry->data);
@@ -342,7 +357,7 @@ static long keyvalue_set(struct keyvalue_set __user *ukv)
 		#ifdef LINUX_RWLOCK
 			write_unlock(&mr_rwlock);
 		#endif
-		//return 1;  
+
 		return transaction_id++;
 
 	}
@@ -354,7 +369,17 @@ static long keyvalue_set(struct keyvalue_set __user *ukv)
 			{		
 				void* temp_data	= val->kventry->data;
 				val->kventry->data = (void*) kmalloc(kv.size, GFP_KERNEL);
-				copy_from_user(val->kventry->data, kv.data, kv.size);
+				bytes_not_copied = copy_from_user(val->kventry->data, kv.data, kv.size);
+				if(bytes_not_copied != 0)
+				{
+					printk(KERN_ERR "Could not copy all bytes from user");
+					kfree(val->kventry->data);			
+					#ifdef LINUX_RWLOCK
+						write_unlock(&mr_rwlock);
+					#endif
+					return -1;
+				}
+
 				kfree(temp_data);
 				val->kventry->size	= kv.size;
 
@@ -372,8 +397,22 @@ static long keyvalue_set(struct keyvalue_set __user *ukv)
 			else
 			{	
 				head	= create_node(&kv);	
-				if(head == NULL) return -1;
+				
+				if(head == NULL)
+				{
+				
+				#ifdef IMPLEMENTED_RWLOCK
+				read_write_Lock_release_writelock(lock);
+				#endif
+				#ifdef LINUX_RWLOCK
+					write_unlock(&mr_rwlock);
+				#endif
+ 				return -1;
+				
+				}
+
 				val->next = head;
+
 				#ifdef DEBUG_MODE_1
 					//printk(KERN_INFO "KEYVALUE device: Write: New Node inserted at map[%llu]: \n",key_to_be_set);
 					printk(KERN_INFO "KEYVALUE device: Write: Second Node inserted at tail at map[%llu], size: %llu, key: %llu, data: %s: \n",key_to_be_set, head->kventry->size, head->kventry->key, (char*)head->kventry->data);
@@ -397,7 +436,18 @@ static long keyvalue_set(struct keyvalue_set __user *ukv)
 				{
 					void* temp_data	= val->kventry->data;
 					val->kventry->data = (void*) kmalloc(kv.size, GFP_KERNEL);
-					copy_from_user(val->kventry->data, kv.data, kv.size);
+					bytes_not_copied = copy_from_user(val->kventry->data, kv.data, kv.size);
+					
+					if(bytes_not_copied != 0)
+					{
+						printk(KERN_ERR "Could not copy all data from user");
+						kfree(val->kventry->data);			
+						#ifdef LINUX_RWLOCK
+							write_unlock(&mr_rwlock);
+						#endif
+						return -1;
+					}
+
 					kfree(temp_data);
 					val->kventry->size	= kv.size;
 					
@@ -419,8 +469,18 @@ static long keyvalue_set(struct keyvalue_set __user *ukv)
 			}
 
 			//val->next = head;
-			head	= create_node(&kv);	
-			if(head == NULL) return -1;
+			head	= create_node(&kv);
+			if(head == NULL)
+			{
+			#ifdef IMPLEMENTED_RWLOCK
+				read_write_Lock_release_writelock(lock);
+			#endif
+			#ifdef LINUX_RWLOCK
+				write_unlock(&mr_rwlock);
+			#endif
+ 			return -1;		
+			}
+
 			prev->next = head;
 			#ifdef DEBUG_MODE_1
 				printk(KERN_INFO "KEYVALUE device: Write: New Node inserted at tail at map[%llu], size: %llu, key: %llu, data: %s: \n",key_to_be_set, head->kventry->size, head->kventry->key, (char*)head->kventry->data);
