@@ -52,11 +52,11 @@
 
 // added by ishan
 #include <linux/spinlock.h>
-//#define DEBUG_MODE_1
-#define MAX_NUMBER_OF_KEY_VALUE_PAIRS 262144
+#define DEBUG_MODE_1
+#define MAX_NUMBER_OF_KEY_VALUE_PAIRS 8192
 //#define IMPLEMENTED_RWLOCK
-//#define LINUX_RWLOCK
-#define SINGLE_LINUX_RWLOCK
+#define LINUX_RWLOCK
+//#define SINGLE_LINUX_RWLOCK
 
 //////////////////////////// READERS WRITERS LOCK ///////////////////////////////////
 
@@ -143,7 +143,14 @@ rwlock_t mr_rwlock;	// dynamic
 
 static __u64 hash(__u64 key)
 {
-	return (key%MAX_NUMBER_OF_KEY_VALUE_PAIRS);
+	if(MAX_NUMBER_OF_KEY_VALUE_PAIRS == 1)
+	{
+		return 1;
+	}
+	else
+	{
+		return (key%MAX_NUMBER_OF_KEY_VALUE_PAIRS);
+	}
 }
 
 struct keyvalue_base
@@ -178,12 +185,6 @@ static void free_callback(void *data)
 
 static long keyvalue_get(struct keyvalue_get __user *ukv)
 {
-	struct keyvalue_get kv;
-	__u64 key_to_be_fetched;
-	__u64 bytes_not_copied;
-
-	struct dictnode* curr;
-	
 	#ifdef IMPLEMENTED_RWLOCK
 	read_write_Lock_acquire_readlock(lock);
 	#endif
@@ -197,6 +198,12 @@ static long keyvalue_get(struct keyvalue_get __user *ukv)
 			return -1;
 		}		
 	#endif
+	
+	struct keyvalue_get kv;
+	__u64 key_to_be_fetched;
+	__u64 bytes_not_copied;
+
+	struct dictnode* curr;
 	
 	kv.key	= ukv->key;
 	kv.size	= ukv->size;
@@ -324,13 +331,6 @@ struct dictnode* create_node(struct keyvalue_set* kv)
 
 static long keyvalue_set(struct keyvalue_set __user *ukv)
 {
-	struct keyvalue_set kv;
-	__u64 key_to_be_set;
-	__u64 bytes_not_copied;
-	struct dictnode* val;
-	struct dictnode* prev;
-	struct dictnode* head ;
-
 	#ifdef IMPLEMENTED_RWLOCK
 	read_write_Lock_acquire_writelock(lock);
 	#endif
@@ -345,6 +345,13 @@ static long keyvalue_set(struct keyvalue_set __user *ukv)
 		}		
 	#endif
 	
+	struct keyvalue_set kv;
+	__u64 key_to_be_set;
+	__u64 bytes_not_copied;
+	struct dictnode* val;
+	struct dictnode* prev;
+	struct dictnode* head ;
+
 	kv.key	= ukv->key;
 	kv.size	= ukv->size;
 	kv.data	= ukv->data;
@@ -601,10 +608,6 @@ static long keyvalue_set(struct keyvalue_set __user *ukv)
 
 static long keyvalue_delete(struct keyvalue_delete __user *ukv)
 {
-	struct keyvalue_delete kv;
-	__u64 key_to_be_deleted;
-	struct dictnode* curr ;	
-
 	#ifdef IMPLEMENTED_RWLOCK
 	read_write_Lock_acquire_writelock(lock);
 	#endif
@@ -618,6 +621,10 @@ static long keyvalue_delete(struct keyvalue_delete __user *ukv)
 			return -1;
 		}		
 	#endif
+
+	struct keyvalue_delete kv;
+	__u64 key_to_be_deleted;
+	struct dictnode* curr ;	
 
 	kv.key	= ukv->key;
 	key_to_be_deleted	= hash(kv.key);
