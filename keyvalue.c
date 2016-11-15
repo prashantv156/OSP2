@@ -53,11 +53,16 @@
 // added by ishan
 #include <linux/spinlock.h>
 //#define DEBUG_MODE_1
-#define MAX_NUMBER_OF_KEY_VALUE_PAIRS 256
+#define MAX_NUMBER_OF_KEY_VALUE_PAIRS 262144
 //#define IMPLEMENTED_RWLOCK
-#define LINUX_RWLOCK
+//#define LINUX_RWLOCK
+#define SINGLE_LINUX_RWLOCK
 
 //////////////////////////// READERS WRITERS LOCK ///////////////////////////////////
+
+#ifdef SINGLE_LINUX_RWLOCK
+	struct semaphore simple_lock;
+#endif
 
 #ifdef IMPLEMENTED_RWLOCK
 typedef struct _read_write_Lock_t
@@ -179,19 +184,26 @@ static long keyvalue_get(struct keyvalue_get __user *ukv)
 
 	struct dictnode* curr;
 	
-	kv.key	= ukv->key;
-	kv.size	= ukv->size;
-	kv.data	= ukv->data;
-	key_to_be_fetched	= hash(kv.key);
-	curr			= map->hashmap[key_to_be_fetched];
-
 	#ifdef IMPLEMENTED_RWLOCK
 	read_write_Lock_acquire_readlock(lock);
 	#endif
 	#ifdef LINUX_RWLOCK
 		read_lock(&mr_rwlock);
 	#endif
+	#ifdef SINGLE_LINUX_RWLOCK
+		if(down_interruptible(&simple_lock) != 0)
+		{
+			printk(KERN_INFO "could not hold semaphore used for rw->lock");
+			return -1;
+		}		
+	#endif
 	
+	kv.key	= ukv->key;
+	kv.size	= ukv->size;
+	kv.data	= ukv->data;
+	key_to_be_fetched	= hash(kv.key);
+	curr			= map->hashmap[key_to_be_fetched];
+
 	if(curr == NULL)
 	{
 		#ifdef DEBUG_MODE_1
@@ -202,6 +214,9 @@ static long keyvalue_get(struct keyvalue_get __user *ukv)
 		#endif
 		#ifdef LINUX_RWLOCK
 			read_unlock(&mr_rwlock);
+		#endif
+		#ifdef SINGLE_LINUX_RWLOCK
+			up(&simple_lock);
 		#endif
 		return -1;
 	}
@@ -230,14 +245,18 @@ static long keyvalue_get(struct keyvalue_get __user *ukv)
 				// WARNING: The user might not have allocated memory to kv.data
 				// Possible bug ishan
 
+				transaction_id++;
 				#ifdef IMPLEMENTED_RWLOCK
 				read_write_Lock_release_readlock(lock);
 				#endif
 				#ifdef LINUX_RWLOCK
 					read_unlock(&mr_rwlock);
 				#endif
+				#ifdef SINGLE_LINUX_RWLOCK
+					up(&simple_lock);
+				#endif
 				//return 1;
-				return transaction_id++;
+				return transaction_id;
 			}
 			curr	= curr->next;
 		}
@@ -250,6 +269,9 @@ static long keyvalue_get(struct keyvalue_get __user *ukv)
 		#endif
 		#ifdef LINUX_RWLOCK
 			read_unlock(&mr_rwlock);
+		#endif
+		#ifdef SINGLE_LINUX_RWLOCK
+			up(&simple_lock);
 		#endif
 		return -1;
 	}
@@ -302,13 +324,27 @@ struct dictnode* create_node(struct keyvalue_set* kv)
 
 static long keyvalue_set(struct keyvalue_set __user *ukv)
 {
-    struct keyvalue_set kv;
+	struct keyvalue_set kv;
 	__u64 key_to_be_set;
 	__u64 bytes_not_copied;
 	struct dictnode* val;
 	struct dictnode* prev;
 	struct dictnode* head ;
 
+	#ifdef IMPLEMENTED_RWLOCK
+	read_write_Lock_acquire_writelock(lock);
+	#endif
+	#ifdef LINUX_RWLOCK
+		write_lock(&mr_rwlock);
+	#endif
+	#ifdef SINGLE_LINUX_RWLOCK
+		if(down_interruptible(&simple_lock) != 0)
+		{
+			printk(KERN_INFO "could not hold semaphore used for rw->lock");
+			return -1;
+		}		
+	#endif
+	
 	kv.key	= ukv->key;
 	kv.size	= ukv->size;
 	kv.data	= ukv->data;
@@ -317,13 +353,7 @@ static long keyvalue_set(struct keyvalue_set __user *ukv)
 
 	key_to_be_set		= hash(kv.key);
 	val		 	= map->hashmap[key_to_be_set];
-	#ifdef IMPLEMENTED_RWLOCK
-	read_write_Lock_acquire_writelock(lock);
-	#endif
-	#ifdef LINUX_RWLOCK
-		write_lock(&mr_rwlock);
-	#endif
-
+	
 	if(kv.size > 4096 || kv.size < 1)
 	{
 		#ifdef IMPLEMENTED_RWLOCK
@@ -331,6 +361,9 @@ static long keyvalue_set(struct keyvalue_set __user *ukv)
 		#endif
 		#ifdef LINUX_RWLOCK
 			write_unlock(&mr_rwlock);
+		#endif
+		#ifdef SINGLE_LINUX_RWLOCK
+			up(&simple_lock);
 		#endif
 		return -1;
 	}
@@ -347,6 +380,9 @@ static long keyvalue_set(struct keyvalue_set __user *ukv)
 		#ifdef LINUX_RWLOCK
 			write_unlock(&mr_rwlock);
 		#endif
+		#ifdef SINGLE_LINUX_RWLOCK
+			up(&simple_lock);
+		#endif
  		return -1;
 		
 		}
@@ -355,14 +391,18 @@ static long keyvalue_set(struct keyvalue_set __user *ukv)
 		#ifdef DEBUG_MODE_1
 			printk(KERN_INFO "KEYVALUE device: Write: First Node added at map[%llu], size: %llu, key: %llu, data: %s: \n",key_to_be_set, head->kventry->size, head->kventry->key,(char*) head->kventry->data);
 		#endif
+		transaction_id++;
 		#ifdef IMPLEMENTED_RWLOCK
 		read_write_Lock_release_writelock(lock);
 		#endif
 		#ifdef LINUX_RWLOCK
 			write_unlock(&mr_rwlock);
 		#endif
+		#ifdef SINGLE_LINUX_RWLOCK
+			up(&simple_lock);
+		#endif
 
-		return transaction_id++;
+		return transaction_id;
 
 	}
 	else
@@ -378,8 +418,14 @@ static long keyvalue_set(struct keyvalue_set __user *ukv)
 				{
 					printk(KERN_ERR "Could not copy all bytes from user");
 					kfree(val->kventry->data);			
+					#ifdef IMPLEMENTED_RWLOCK
+					read_write_Lock_release_writelock(lock);
+					#endif
 					#ifdef LINUX_RWLOCK
 						write_unlock(&mr_rwlock);
+					#endif
+					#ifdef SINGLE_LINUX_RWLOCK
+						up(&simple_lock);
 					#endif
 					return -1;
 				}
@@ -390,13 +436,17 @@ static long keyvalue_set(struct keyvalue_set __user *ukv)
 				#ifdef DEBUG_MODE_1
 					printk(KERN_INFO "KEYVALUE device: Write: First Node Overwritten at map[%llu], size: %llu, key: %llu, data: %s: \n",key_to_be_set, val->kventry->size, val->kventry->key,(char*) val->kventry->data);
 				#endif
+				transaction_id++;
 				#ifdef IMPLEMENTED_RWLOCK
 				read_write_Lock_release_writelock(lock);
 				#endif
 				#ifdef LINUX_RWLOCK
 					write_unlock(&mr_rwlock);
 				#endif
-				return transaction_id++;
+				#ifdef SINGLE_LINUX_RWLOCK
+					up(&simple_lock);
+				#endif
+				return transaction_id;
 			}
 			else
 			{	
@@ -411,6 +461,9 @@ static long keyvalue_set(struct keyvalue_set __user *ukv)
 				#ifdef LINUX_RWLOCK
 					write_unlock(&mr_rwlock);
 				#endif
+				#ifdef SINGLE_LINUX_RWLOCK
+					up(&simple_lock);
+				#endif
  				return -1;
 				
 				}
@@ -420,13 +473,17 @@ static long keyvalue_set(struct keyvalue_set __user *ukv)
 				#ifdef DEBUG_MODE_1
 					printk(KERN_INFO "KEYVALUE device: Write: Second Node inserted at tail at map[%llu], size: %llu, key: %llu, data: %s: \n",key_to_be_set, head->kventry->size, head->kventry->key, (char*)head->kventry->data);
 				#endif
+				transaction_id++;
 					#ifdef IMPLEMENTED_RWLOCK
 					read_write_Lock_release_writelock(lock);
 					#endif
 					#ifdef LINUX_RWLOCK
 						write_unlock(&mr_rwlock);
 					#endif
-				return transaction_id++;
+					#ifdef SINGLE_LINUX_RWLOCK
+						up(&simple_lock);
+					#endif
+				return transaction_id;
 			}
 		}
 		else
@@ -444,8 +501,14 @@ static long keyvalue_set(struct keyvalue_set __user *ukv)
 					{
 						printk(KERN_ERR "Could not copy all data from user");
 						kfree(val->kventry->data);			
+						#ifdef IMPLEMENTED_RWLOCK
+						read_write_Lock_release_writelock(lock);
+						#endif
 						#ifdef LINUX_RWLOCK
 							write_unlock(&mr_rwlock);
+						#endif
+						#ifdef SINGLE_LINUX_RWLOCK
+							up(&simple_lock);
 						#endif
 						return -1;
 					}
@@ -457,14 +520,18 @@ static long keyvalue_set(struct keyvalue_set __user *ukv)
 						//printk(KERN_INFO "KEYVALUE device: Write: Node overwritten at map[%llu]: \n",key_to_be_set);
 						printk(KERN_INFO "KEYVALUE device: Write: Node overwritten at map[%llu], size: %llu, key: %llu, data: %s, data_addr: %u: \n",key_to_be_set, val->kventry->size, val->kventry->key, (char *)val->kventry->data, &val->kventry->data);
 					#endif
+					transaction_id++;
 					#ifdef IMPLEMENTED_RWLOCK
 					read_write_Lock_release_writelock(lock);
 					#endif
 					#ifdef LINUX_RWLOCK
 						write_unlock(&mr_rwlock);
 					#endif
+					#ifdef SINGLE_LINUX_RWLOCK
+						up(&simple_lock);
+					#endif
 					//return 1;
-					return transaction_id++;
+					return transaction_id;
 				}								
 				prev	= val;
 				val = val->next;	
@@ -480,6 +547,9 @@ static long keyvalue_set(struct keyvalue_set __user *ukv)
 			#ifdef LINUX_RWLOCK
 				write_unlock(&mr_rwlock);
 			#endif
+			#ifdef SINGLE_LINUX_RWLOCK
+				up(&simple_lock);
+			#endif
  			return -1;		
 			}
 
@@ -487,24 +557,32 @@ static long keyvalue_set(struct keyvalue_set __user *ukv)
 			#ifdef DEBUG_MODE_1
 				printk(KERN_INFO "KEYVALUE device: Write: New Node inserted at tail at map[%llu], size: %llu, key: %llu, data: %s: \n",key_to_be_set, head->kventry->size, head->kventry->key, (char*)head->kventry->data);
 			#endif
+			transaction_id++;
 			#ifdef IMPLEMENTED_RWLOCK
 			read_write_Lock_release_writelock(lock);
 			#endif
 			#ifdef LINUX_RWLOCK
 				write_unlock(&mr_rwlock);
 			#endif
-			return transaction_id++;
+			#ifdef SINGLE_LINUX_RWLOCK
+				up(&simple_lock);
+			#endif
+			return transaction_id;
 
 		}
 
+		transaction_id++;
 		#ifdef IMPLEMENTED_RWLOCK
 		read_write_Lock_release_writelock(lock);
 		#endif
 		#ifdef LINUX_RWLOCK
 			write_unlock(&mr_rwlock);
 		#endif
+		#ifdef SINGLE_LINUX_RWLOCK
+			up(&simple_lock);
+		#endif
 		//return 1;
-		return transaction_id++;
+		return transaction_id;
 
 	}
 
@@ -514,19 +592,18 @@ static long keyvalue_set(struct keyvalue_set __user *ukv)
 	#ifdef LINUX_RWLOCK
 		write_unlock(&mr_rwlock);
 	#endif
+	#ifdef SINGLE_LINUX_RWLOCK
+		up(&simple_lock);
+	#endif
 	return -1;
     //return transaction_id++;
 }
 
 static long keyvalue_delete(struct keyvalue_delete __user *ukv)
 {
-    struct keyvalue_delete kv;
+	struct keyvalue_delete kv;
 	__u64 key_to_be_deleted;
 	struct dictnode* curr ;	
-
-	kv.key	= ukv->key;
-	key_to_be_deleted	= hash(kv.key);
-	curr			= map->hashmap[key_to_be_deleted];
 
 	#ifdef IMPLEMENTED_RWLOCK
 	read_write_Lock_acquire_writelock(lock);
@@ -534,6 +611,17 @@ static long keyvalue_delete(struct keyvalue_delete __user *ukv)
 	#ifdef LINUX_RWLOCK
 		write_lock(&mr_rwlock);
 	#endif
+	#ifdef SINGLE_LINUX_RWLOCK
+		if(down_interruptible(&simple_lock) != 0)
+		{
+			printk(KERN_INFO "could not hold semaphore used for rw->lock");
+			return -1;
+		}		
+	#endif
+
+	kv.key	= ukv->key;
+	key_to_be_deleted	= hash(kv.key);
+	curr			= map->hashmap[key_to_be_deleted];
 
 	if(curr == NULL)
 	{
@@ -546,6 +634,9 @@ static long keyvalue_delete(struct keyvalue_delete __user *ukv)
 		#ifdef LINUX_RWLOCK
 			write_unlock(&mr_rwlock);
 		#endif
+		#ifdef SINGLE_LINUX_RWLOCK
+			up(&simple_lock);
+		#endif
 		return -1;
 	}
 
@@ -555,13 +646,18 @@ static long keyvalue_delete(struct keyvalue_delete __user *ukv)
 		kfree(curr->kventry->data);
 		kfree(curr->kventry);
 		kfree(curr);
+
+		transaction_id++;
 		#ifdef IMPLEMENTED_RWLOCK
 		read_write_Lock_release_writelock(lock);
 		#endif
 		#ifdef LINUX_RWLOCK
 			write_unlock(&mr_rwlock);
 		#endif
-    		return transaction_id++;
+		#ifdef SINGLE_LINUX_RWLOCK
+			up(&simple_lock);
+		#endif
+    		return transaction_id;
 	}
 
 	else
@@ -575,13 +671,18 @@ static long keyvalue_delete(struct keyvalue_delete __user *ukv)
 				kfree(curr->kventry->data);
 				kfree(curr->kventry);
 				kfree(curr);
+
+				transaction_id++;
 				#ifdef IMPLEMENTED_RWLOCK
 				read_write_Lock_release_writelock(lock);
 				#endif
 				#ifdef LINUX_RWLOCK
 					write_unlock(&mr_rwlock);
 				#endif
-    				return transaction_id++;
+				#ifdef SINGLE_LINUX_RWLOCK
+					up(&simple_lock);
+				#endif
+    				return transaction_id;
 			}
 			prev	= curr;
 			curr 	= curr->next;
@@ -596,6 +697,9 @@ static long keyvalue_delete(struct keyvalue_delete __user *ukv)
 		#ifdef LINUX_RWLOCK
 			write_unlock(&mr_rwlock);
 		#endif
+		#ifdef SINGLE_LINUX_RWLOCK
+			up(&simple_lock);
+		#endif
 		return -1;
 	}
 
@@ -604,6 +708,9 @@ static long keyvalue_delete(struct keyvalue_delete __user *ukv)
 	#endif
 	#ifdef LINUX_RWLOCK
 		write_unlock(&mr_rwlock);
+	#endif
+	#ifdef SINGLE_LINUX_RWLOCK
+		up(&simple_lock);
 	#endif
 	return -1;
    
@@ -658,6 +765,9 @@ static int __init keyvalue_init(void)
 	// added by ishan
 	__u64 i;
 
+	#ifdef SINGLE_LINUX_RWLOCK
+		sema_init(&simple_lock, 1);
+	#endif
 	#ifdef LINUX_RWLOCK
 		rwlock_init(&mr_rwlock);
 	#endif
