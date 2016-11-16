@@ -1,9 +1,9 @@
 #!/bin/sh
 pwd
-cd /usr/local/include/
-pwd
-sudo mkdir keyvalue
-cd -
+#cd /usr/local/include/
+#pwd
+#sudo mkdir keyvalue
+#cd -
 cd kernel_module/
 pwd
 sudo make clean
